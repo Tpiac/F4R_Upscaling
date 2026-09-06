@@ -271,6 +271,7 @@ namespace F4R_Upscaling
 		}
 
 		settingsIniPath = a_iniPath;
+		PollRuntimeSettings();
 	}
 
 	void Upscaling::PollRuntimeSettings()

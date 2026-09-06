@@ -246,6 +246,7 @@ namespace
 			{
 				F4R_Upscaling::Upscaling::GetSingleton().InvalidateFlareDepth();
 				F4R_Upscaling::Upscaling::GetSingleton().RequestReset();
+				F4R_Upscaling::Upscaling::GetSingleton().PollRuntimeSettings();
 				break;
 			}
 		default:
