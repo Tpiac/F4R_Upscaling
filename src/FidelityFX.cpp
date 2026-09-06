@@ -150,7 +150,7 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		REX::LogInformation("FSR3 context created ({}x{})", backBufferWidth, backBufferHeight);
+		REX::LogDebug("FSR3 context created ({}x{})", backBufferWidth, backBufferHeight);
 
 		const std::pair<FfxFsr3UpscalerConfigureKey, float> upscalerConstants[] = {
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, 1.0f },

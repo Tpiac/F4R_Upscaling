@@ -359,7 +359,6 @@ namespace F4R_Upscaling
 		if (a_qualityMode == 1) mode = sl::DLSSMode::eMaxQuality;
 		else if (a_qualityMode == 2) mode = sl::DLSSMode::eBalanced;
 		else if (a_qualityMode == 3) mode = sl::DLSSMode::eMaxPerformance;
-		else if (a_qualityMode == 4) mode = sl::DLSSMode::eUltraPerformance;
 
 		bool isHDR = false;
 		if (a_colorSRV) {

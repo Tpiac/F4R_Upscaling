@@ -165,7 +165,9 @@ namespace
 		GetDynWidthRatio(rtMgr) = 1.0f;
 		GetDynHeightRatio(rtMgr) = 1.0f;
 		GetDynResActivated(rtMgr) = false;
-		Upscaling::GetSingleton().RequestReset();
+		auto& up = Upscaling::GetSingleton();
+		up.InvalidateFlareDepth();
+		up.RequestReset();
 	}
 
 	using ImageSpace_RestoreDynamicResolutionFunc = void(void*);
@@ -190,14 +192,18 @@ namespace
 
 void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 {
-		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
-		auto& up = Upscaling::GetSingleton();
-		up.PopFlareDepth();
-		bool need = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
-		if (need) up.PushFlareDepth();
-		g_originalLensFlare_ForceFullResDepth(a_camera);
-		up.PopFlareDepth();
+	auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+	auto& up = Upscaling::GetSingleton();
+	up.PopFlareDepth();
+	const bool dynLow = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
+	const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f &&
+		up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
+	if (need) {
+		up.PushFlareDepth();
 	}
+	g_originalLensFlare_ForceFullResDepth(a_camera);
+	up.PopFlareDepth();
+}
 
 	using SSLRRaytracing_SkipInQualityModesFunc = void(RE::BSShader*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 	SSLRRaytracing_SkipInQualityModesFunc* g_originalSSLRRaytracing_SkipInQualityModes = nullptr;
@@ -234,12 +240,22 @@ void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 	}
 
 	std::unordered_map<ID3D11SamplerState*, ID3D11SamplerState*> g_samplerCache;
+	constexpr std::size_t kSamplerCacheLimit = 512;
 
 	ID3D11SamplerState* EnsureCappedSampler(ID3D11SamplerState* a_original)
 	{
 		if (!a_original) return nullptr;
 		auto it = g_samplerCache.find(a_original);
 		if (it != g_samplerCache.end()) return it->second;
+
+		if (g_samplerCache.size() >= kSamplerCacheLimit) {
+			for (const auto& [key, value] : g_samplerCache) {
+				if (value && value != key) {
+					value->Release();
+				}
+			}
+			g_samplerCache.clear();
+		}
 
 		D3D11_SAMPLER_DESC desc;
 		a_original->GetDesc(&desc);

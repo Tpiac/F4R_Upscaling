@@ -2,7 +2,6 @@ cbuffer FlareDepthConstants : register(b0)
 {
     uint2 TargetSize;
     uint2 SourceSize;
-    float4 CameraParams;
 };
 
 Texture2D<float> SourceDepth : register(t0);

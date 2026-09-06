@@ -256,7 +256,7 @@ namespace F4R_Upscaling
 		else if (quality == XESS_QUALITY_SETTING_BALANCED) qname = "Balanced";
 		else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) qname = "Performance";
 		initialized = true;
-		REX::LogInformation("XeSS context created ({}x{} {})", a_width, a_height, qname);
+		REX::LogDebug("XeSS context created ({}x{} {})", a_width, a_height, qname);
 		return true;
 	}
 

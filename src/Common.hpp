@@ -97,7 +97,6 @@ namespace F4R_Upscaling
 			kSSRDirection = 10,
 			kSSRMask = 11,
 			kMotionVectors = 29,
-			kMainDepthMips = 39,
 		};
 	}
 

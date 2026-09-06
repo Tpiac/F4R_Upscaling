@@ -125,17 +125,20 @@ namespace
 		std::string content =
 			"[Settings]\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
-			"; Applied on top, it may interfere with the presets below and thus produce excessive sharpening\n"
+			"; Tweaking this setting applies in-game without restarting\n"
 			"fSharpness=0.5\n"
 			"; NVIDIA Reflex to reduce game latency\n"
+			"; Tweaking this settings applies in-game without restarting\n"
 			"bEnableReflex=0\n"
 			"bReflexBoost=0\n"
 			"; 0 = Native (DLAA, default), 1 = Quality DLSS (0.66x, 1.5x), 2 = Balanced (0.58x, 1.7x), 3 = Performance (0.5x, 2x)\n"
 			"; ENB forces Native\n"
+			"; Tweaking this setting applies in-game without restarting\n"
 			"iQualityMode=0\n"
 			"\n"
 			"[Advanced]\n"
 			"; Reflex FPS limiter\n"
+			"; Tweaking this settings applies in-game without restarting\n"
 			"bReflexUseFPSLimit=0\n"
 			"fReflexFPSLimit=60\n"
 			"; -0.0001 = default safety net to preserve samplers from being overriden\n"
@@ -147,9 +150,11 @@ namespace
 		std::string content =
 			"[Settings]\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
+			"; Tweaking this setting applies in-game without restarting\n"
 			"fSharpness=0.5\n"
 			"; 0 = Native (FSR 1.0x), 1 = Quality (0.66x, 1.5x), 2 = Balanced (0.58x, 1.7x), 3 = Performance (0.5x, 2x)\n"
 			"; ENB forces Native\n"
+			"; Tweaking this setting applies in-game without restarting\n"
 			"iQualityMode=0\n"
 			"\n"
 			"[Advanced]\n"
@@ -158,7 +163,7 @@ namespace
 			"fAnisotropicMipBias=-0.0001\n"
 			"\n"
 			"[ENB]\n"
-			"; ENB D3D11 proxy bypass offsets (FSR3 & XeSS)\n"
+			"; ENB D3D11 proxy bypass offsets\n"
 			"DeviceOffset=0x28\n"
 			"ContextOffset=0x6C20\n";
 
@@ -178,7 +183,7 @@ namespace
 			"fAnisotropicMipBias=-0.0001\n"
 			"\n"
 			"[ENB]\n"
-			"; ENB D3D11 proxy bypass offsets (FSR3 & XeSS)\n"
+			"; ENB D3D11 proxy bypass offsets\n"
 			"DeviceOffset=0x28\n"
 			"ContextOffset=0x6C20\n";
 
@@ -190,16 +195,20 @@ namespace
 			"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off\n"
 			"iMethod=1\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
+			"; Tweaking this setting applies in-game without restarting (DLSS & FSR3)\n"
 			"fSharpness=0.5\n"
 			"; NVIDIA Reflex to reduce game latency (DLSS mode only)\n"
+			"; Tweaking this settings applies in-game without restarting (DLSS)\n"
 			"bEnableReflex=0\n"
 			"bReflexBoost=0\n"
 			"; 0 = Native (default), 1 = Quality (0.66x, 1.5x), 2 = Balanced (0.58x, 1.7x), 3 = Performance (0.5x, 2x)\n"
 			"; ENB forces Native\n"
+			"; Tweaking this setting applies in-game without restarting (DLSS & FSR3)\n"
 			"iQualityMode=0\n"
 			"\n"
 			"[Advanced]\n"
 			"; Reflex FPS limiter (DLSS mode only)\n"
+			"; Tweaking this settings applies in-game without restarting (DLSS)\n"
 			"bReflexUseFPSLimit=0\n"
 			"fReflexFPSLimit=60\n"
 			"; -0.0001 = default safety net to preserve samplers from being overridden\n"
@@ -230,6 +239,13 @@ namespace
 				CreateDefaultINI();
 				F4R_Upscaling::Upscaling::GetSingleton().LoadSettings(GetPluginINIPath());
 				F4R_Upscaling::Upscaling::GetSingleton().Init();
+				break;
+			}
+		case F4SE::MessagingInterface::MessageType::kPostLoadGame:
+		case F4SE::MessagingInterface::MessageType::kNewGame:
+			{
+				F4R_Upscaling::Upscaling::GetSingleton().InvalidateFlareDepth();
+				F4R_Upscaling::Upscaling::GetSingleton().RequestReset();
 				break;
 			}
 		default:

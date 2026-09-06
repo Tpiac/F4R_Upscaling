@@ -32,6 +32,9 @@ namespace F4R_Upscaling
 
 		void UpdateGameSettings();
 		void CheckResources();
+		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
+		void InvalidateFlareDepth();
+		void PollRuntimeSettings();
         void RequestReset();
 		void BuildFlareDepth(RE::BSGraphics::RenderTargetManager& a_rtMgr);
 		void PushFlareDepth();
@@ -40,6 +43,7 @@ namespace F4R_Upscaling
 		Settings settings;
 
 		bool upsclEnabled = false;
+		bool wasUpsclEnabled = false;
 		bool resetHistory = false;
 
 		std::unique_ptr<Texture2D> workingTexture;
@@ -60,6 +64,9 @@ namespace F4R_Upscaling
 		ID3D11ComputeShader* flareDepthShader = nullptr;
 		ID3D11Buffer* flareDepthCB = nullptr;
 		ID3D11ShaderResourceView* flareDepthBackup = nullptr;
+		bool flareValid = false;
+		std::uint32_t flareWidth = 0;
+		std::uint32_t flareHeight = 0;
 
 		ID3D11SamplerState* biasedSamplerStates[320]{};
 		ID3D11SamplerState* originalSamplerStates[320]{};
@@ -75,9 +82,12 @@ namespace F4R_Upscaling
 		std::unique_ptr<FidelityFX> fidelityFX;
 #endif
 
-private:
+	private:
 		Upscaling() = default;
 
+		std::string settingsIniPath;
+		std::uint64_t settingsIniWriteTime = 0;
+		bool settingsIniHasTime = false;
 		bool resourcesCreated = false;
 		uint32_t cachedWidth = 0;
 		uint32_t cachedHeight = 0;
@@ -85,6 +95,12 @@ private:
 		int32_t cachedMethod = -1;
 		float cachedSharpness = -1.0f;
 		int32_t cachedQuality = -1;
+#if F4R_HAS_FSR3
+		std::uint32_t fsrRetryFrame = 0;
+#endif
+#if F4R_HAS_XESS
+		std::uint32_t xessRetryFrame = 0;
+#endif
 
 		int startupFrameGuard = 0;
 	};
