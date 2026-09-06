@@ -359,8 +359,8 @@ namespace F4R_Upscaling
 		FfxResource reactiveResource;
 		FfxResourceFromDX11Texture(reactiveResource, reactiveMaskTexture->resource);
 
-		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr));
-		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr));
+		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr) + 0.5f);
+		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr) + 0.5f);
 
 		FfxFsr3GenerateReactiveDescription desc = {};
 		desc.commandList = reinterpret_cast<FfxCommandList>(ctx);

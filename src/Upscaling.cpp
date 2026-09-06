@@ -608,9 +608,23 @@ namespace F4R_Upscaling
 			}
 		}
 
-		GetDynHeightRatio(rtMgr) = desiredScale;
-		GetDynWidthRatio(rtMgr) = desiredScale;
-		GetDynResActivated(rtMgr) = (desiredScale < 0.999f);
+		if (!upsclEnabled || desiredScale >= 0.999f) {
+			GetDynWidthRatio(rtMgr) = 1.0f;
+			GetDynHeightRatio(rtMgr) = 1.0f;
+			GetDynResActivated(rtMgr) = false;
+		} else if (state.screenWidth >= 1 && state.screenHeight >= 1) {
+			uint32_t snapW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * desiredScale);
+			uint32_t snapH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * desiredScale);
+			if (snapW < 1) snapW = 1;
+			if (snapH < 1) snapH = 1;
+			GetDynWidthRatio(rtMgr) = static_cast<float>(snapW) / static_cast<float>(state.screenWidth);
+			GetDynHeightRatio(rtMgr) = static_cast<float>(snapH) / static_cast<float>(state.screenHeight);
+			GetDynResActivated(rtMgr) = true;
+		} else {
+			GetDynHeightRatio(rtMgr) = desiredScale;
+			GetDynWidthRatio(rtMgr) = desiredScale;
+			GetDynResActivated(rtMgr) = (desiredScale < 0.999f);
+		}
 
 		if (s_prevScale != desiredScale) {
 			resetHistory = true;
@@ -672,8 +686,10 @@ namespace F4R_Upscaling
 			ctx->CopyResource(reinterpret_cast<ID3D11Resource*>(workingTexture->resource), backBufferResource);
 		}
 
-		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr));
-		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr));
+		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr) + 0.5f);
+		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr) + 0.5f);
+		if (renderW < 1) renderW = 1;
+		if (renderH < 1) renderH = 1;
 
 #if F4R_HAS_DLSS
 		if (mode == Method::DLSS) {
@@ -966,8 +982,8 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			PopFlareDepth();
 		}
 
-		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(a_rtMgr));
-		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(a_rtMgr));
+		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(a_rtMgr) + 0.5f);
+		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(a_rtMgr) + 0.5f);
 		if (renderW < 1) renderW = 1;
 		if (renderH < 1) renderH = 1;
 
