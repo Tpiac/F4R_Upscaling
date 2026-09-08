@@ -144,6 +144,7 @@ namespace
 			"\n"
 			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
 			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
+			"; Custom values apply in Native mode only\n"
 			"fAnisotropicMipBias=-0.0001\n";
 
 #elif !F4R_HAS_DLSS && F4R_HAS_FSR3
@@ -162,6 +163,7 @@ namespace
 			"[Advanced]\n"
 			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
 			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
+			"; Custom values apply in Native mode only\n"
 			"fAnisotropicMipBias=-0.0001\n"
 			"\n"
 			"[ENB]\n"
@@ -185,6 +187,7 @@ namespace
 			"[Advanced]\n"
 			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
 			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
+			"; Custom values apply in Native mode only\n"
 			"fAnisotropicMipBias=-0.0001\n"
 			"\n"
 			"[ENB]\n"
@@ -221,6 +224,7 @@ namespace
 			"\n"
 			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
 			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
+			"; Custom values apply in Native mode only\n"
 			"fAnisotropicMipBias=-0.0001\n"
 			"\n"
 			"[ENB]\n"
