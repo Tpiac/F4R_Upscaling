@@ -335,6 +335,7 @@ namespace F4R_Upscaling
 	void Streamline::Evaluate(
 		ID3D11Resource* a_colorResource,
 		ID3D11ShaderResourceView* a_colorSRV,
+		ID3D11Resource* a_colorOutResource,
 		ID3D11Resource* a_motionVectorsResource,
 		float a_jitterX,
 		float a_jitterY,
@@ -387,7 +388,7 @@ namespace F4R_Upscaling
 		}
 
 		sl::Resource colorIn(sl::ResourceType::eTex2d, a_colorResource);
-		sl::Resource colorOut(sl::ResourceType::eTex2d, a_colorResource);
+		sl::Resource colorOut(sl::ResourceType::eTex2d, a_colorOutResource ? a_colorOutResource : a_colorResource);
 		sl::Resource depth(sl::ResourceType::eTex2d, reinterpret_cast<void*>(rendererData->depthStencilTargets[2].texture));
 		sl::Resource motionVectors(sl::ResourceType::eTex2d, a_motionVectorsResource);
 

@@ -68,6 +68,7 @@ namespace F4R_Upscaling
 		void Evaluate(
 			ID3D11Resource* a_colorResource,
 			ID3D11ShaderResourceView* a_colorSRV,
+			ID3D11Resource* a_colorOutResource,
 			ID3D11Resource* a_motionVectorsResource,
 			float a_jitterX,
 			float a_jitterY,

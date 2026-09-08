@@ -30,6 +30,9 @@ namespace F4R_Upscaling
 		void OverrideSamplerStates();
 		void ResetSamplerStates();
 
+		void RefreshSamplerCache(SamplerStates* a_states, float a_bias);
+		void RebuildSamplerCache(float a_bias);
+
 		void UpdateGameSettings();
 		void CheckResources();
 		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
@@ -45,8 +48,10 @@ namespace F4R_Upscaling
 		bool upsclEnabled = false;
 		bool wasUpsclEnabled = false;
 		bool resetHistory = false;
+		bool samplerBiasActive = false;
 
 		std::unique_ptr<Texture2D> workingTexture;
+		std::unique_ptr<Texture2D> dlssOutputTexture;
 		std::unique_ptr<Texture2D> motionVectorTexture;
 		std::unique_ptr<Texture2D> tempTexture;
 		ID3D11ComputeShader* mvFixShader = nullptr;
@@ -70,6 +75,8 @@ namespace F4R_Upscaling
 
 		ID3D11SamplerState* biasedSamplerStates[320]{};
 		ID3D11SamplerState* originalSamplerStates[320]{};
+		float cachedSamplerBias = 0.0f;
+		bool samplerCacheValid = false;
 
 		float jitterX = 0.0f;
 		float jitterY = 0.0f;

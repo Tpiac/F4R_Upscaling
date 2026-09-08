@@ -192,7 +192,19 @@ namespace F4R_Upscaling
 		return instance;
 	}
 
-	Upscaling::~Upscaling() = default;
+	Upscaling::~Upscaling()
+	{
+		for (int i = 0; i < 320; i++) {
+			if (biasedSamplerStates[i]) {
+				biasedSamplerStates[i]->Release();
+				biasedSamplerStates[i] = nullptr;
+			}
+			if (originalSamplerStates[i]) {
+				originalSamplerStates[i]->Release();
+				originalSamplerStates[i] = nullptr;
+			}
+		}
+	}
 
 	void Upscaling::LoadSettings(const std::string& a_iniPath)
 	{
@@ -220,6 +232,8 @@ namespace F4R_Upscaling
 
 		GetPrivateProfileStringA("Advanced", "fAnisotropicMipBias", "-0.0001", buf, sizeof(buf), a_iniPath.c_str());
 		settings.fAnisotropicMipBias = ParseFloat(buf, -0.0001f);
+		if (settings.fAnisotropicMipBias < -2.0f) settings.fAnisotropicMipBias = -2.0f;
+		if (settings.fAnisotropicMipBias > 0.0f) settings.fAnisotropicMipBias = 0.0f;
 
 #if F4R_HAS_DLSS
 	    GetPrivateProfileStringA("Settings", "bEnableReflex", "1", buf, sizeof(buf), a_iniPath.c_str());
@@ -277,7 +291,7 @@ namespace F4R_Upscaling
 	void Upscaling::PollRuntimeSettings()
 	{
 		if (settingsIniPath.empty()) return;
-		if (settings.iMethod == static_cast<int32_t>(Method::XeSS)) return;
+		const bool isXeSS = (settings.iMethod == static_cast<int32_t>(Method::XeSS));
 
 		WIN32_FILE_ATTRIBUTE_DATA attrs{};
 		if (!GetFileAttributesExA(settingsIniPath.c_str(), GetFileExInfoStandard, &attrs)) return;
@@ -296,27 +310,30 @@ namespace F4R_Upscaling
 		bool qualityChanged = false;
 		bool sharpnessChanged = false;
 		bool reflexChanged = false;
+		bool mipBiasChanged = false;
 		char reflexDesc[64]{};
 
-		GetPrivateProfileStringA("Settings", "fSharpness", "", buf, sizeof(buf), settingsIniPath.c_str());
-		if (buf[0] != '\0') {
-			float v = ParseFloat(buf, settings.fSharpness);
-			if (v < 0.0f) v = 0.0f;
-			if (v > 1.0f) v = 1.0f;
-			if (v != settings.fSharpness) {
-				settings.fSharpness = v;
-				sharpnessChanged = true;
+		if (!isXeSS) {
+			GetPrivateProfileStringA("Settings", "fSharpness", "", buf, sizeof(buf), settingsIniPath.c_str());
+			if (buf[0] != '\0') {
+				float v = ParseFloat(buf, settings.fSharpness);
+				if (v < 0.0f) v = 0.0f;
+				if (v > 1.0f) v = 1.0f;
+				if (v != settings.fSharpness) {
+					settings.fSharpness = v;
+					sharpnessChanged = true;
+				}
 			}
-		}
 
-		GetPrivateProfileStringA("Settings", "iQualityMode", "", buf, sizeof(buf), settingsIniPath.c_str());
-		if (buf[0] != '\0') {
-			int32_t v = ParseInt32(buf, settings.iQualityMode);
-			if (v < 0) v = 0;
-			if (v > 3) v = 3;
-			if (v != settings.iQualityMode) {
-				settings.iQualityMode = v;
-				qualityChanged = true;
+			GetPrivateProfileStringA("Settings", "iQualityMode", "", buf, sizeof(buf), settingsIniPath.c_str());
+			if (buf[0] != '\0') {
+				int32_t v = ParseInt32(buf, settings.iQualityMode);
+				if (v < 0) v = 0;
+				if (v > 3) v = 3;
+				if (v != settings.iQualityMode) {
+					settings.iQualityMode = v;
+					qualityChanged = true;
+				}
 			}
 		}
 
@@ -367,7 +384,19 @@ namespace F4R_Upscaling
 			}
 		}
 
-		if (qualityChanged || sharpnessChanged || reflexChanged) {
+		GetPrivateProfileStringA("Advanced", "fAnisotropicMipBias", "", buf, sizeof(buf), settingsIniPath.c_str());
+		if (buf[0] != '\0') {
+			float v = ParseFloat(buf, settings.fAnisotropicMipBias);
+			if (v < -2.0f) v = -2.0f;
+			if (v > 0.0f) v = 0.0f;
+			if (v != settings.fAnisotropicMipBias) {
+				settings.fAnisotropicMipBias = v;
+				mipBiasChanged = true;
+				samplerCacheValid = false;
+			}
+		}
+
+		if (qualityChanged || sharpnessChanged || reflexChanged || mipBiasChanged) {
 			const char* qname = "Native";
 			if (settings.iQualityMode == 1) qname = "Quality";
 			else if (settings.iQualityMode == 2) qname = "Balanced";
@@ -379,12 +408,23 @@ namespace F4R_Upscaling
 			}
 			if (sharpnessChanged) {
 				char num[16];
-				snprintf(num, sizeof(num), "%.2f", static_cast<double>(settings.fSharpness));
+				snprintf(num, sizeof(num), "%.1f", static_cast<double>(settings.fSharpness));
 				line += " sharpness=";
 				line += num;
 			}
 			if (reflexChanged) {
 				line += reflexDesc;
+			}
+			if (mipBiasChanged) {
+				char num[16];
+				snprintf(num, sizeof(num), "%.4f", static_cast<double>(settings.fAnisotropicMipBias));
+				size_t len = strlen(num);
+				while (len > 0 && num[len - 1] == '0' && num[len - 2] != '.') {
+					num[len - 1] = '\0';
+					len--;
+				}
+				line += " mipBias=";
+				line += num;
 			}
 			REX::LogInformation("{}", line);
 		}
@@ -554,57 +594,13 @@ namespace F4R_Upscaling
 		}
 
 		{
-			auto* samplerStates = GetGlobalSamplers();
+			const bool wantSamplerBias = upsclEnabled;
+			const float samplerBias = (desiredScale < 0.999f) ? std::log2(desiredScale) : settings.fAnisotropicMipBias;
+			samplerBiasActive = wantSamplerBias && (samplerBias != 0.0f);
 
+			auto* samplerStates = samplerBiasActive ? GetGlobalSamplers() : nullptr;
 			if (samplerStates) {
-				float targetMipBias = (desiredScale < 0.999f) ? (std::log2(desiredScale) - 1.0f) : -1.0f;
-				float anisoBias = (desiredScale < 0.999f) ? std::log2(desiredScale) : settings.fAnisotropicMipBias;
-
-				static float s_previousMipBias = 0.0f;
-				static float s_previousAnisoBias = 0.0f;
-				bool needsRebuild = (s_previousMipBias != targetMipBias) || (s_previousAnisoBias != anisoBias);
-
-				auto* device = GetRenderer();
-
-				for (int i = 0; i < 320; i++) {
-					if (originalSamplerStates[i]) {
-						originalSamplerStates[i]->Release();
-					}
-					originalSamplerStates[i] = samplerStates->a[i];
-					if (originalSamplerStates[i]) {
-						originalSamplerStates[i]->AddRef();
-					}
-
-					if (needsRebuild) {
-						if (biasedSamplerStates[i]) {
-							biasedSamplerStates[i]->Release();
-							biasedSamplerStates[i] = nullptr;
-						}
-
-						ID3D11SamplerState* src = samplerStates->a[i];
-						if (src && device) {
-							D3D11_SAMPLER_DESC desc;
-							src->GetDesc(&desc);
-							bool shouldClone = false;
-							if (desc.Filter == D3D11_FILTER_ANISOTROPIC) {
-								desc.MaxAnisotropy = 8;
-								desc.MipLODBias = anisoBias;
-								shouldClone = true;
-							}
-							if (shouldClone) {
-								HRESULT hr = device->CreateSamplerState(&desc, &biasedSamplerStates[i]);
-								if (FAILED(hr)) {
-									biasedSamplerStates[i] = nullptr;
-								}
-							}
-						}
-					}
-				}
-
-				if (needsRebuild) {
-					s_previousMipBias = targetMipBias;
-					s_previousAnisoBias = anisoBias;
-				}
+				RefreshSamplerCache(samplerStates, samplerBias);
 			}
 		}
 
@@ -695,7 +691,8 @@ namespace F4R_Upscaling
 		if (mode == Method::DLSS) {
 			auto& streamline = Streamline::GetSingleton();
 
-			if (!workingTexture || !workingTexture->resource || !workingTexture->srv) {
+			if (!workingTexture || !workingTexture->resource || !workingTexture->srv ||
+				!dlssOutputTexture || !dlssOutputTexture->resource || !dlssOutputTexture->srv) {
 				backBufferResource->Release();
 				return;
 			}
@@ -738,12 +735,13 @@ namespace F4R_Upscaling
 			streamline.Evaluate(
 				workingTexture->resource,
 				workingTexture->srv,
+				dlssOutputTexture->resource,
 				motionVectorTexture ? motionVectorTexture->resource : nullptr,
 				jitterX, jitterY, renderW, renderH, dlssQuality);
 			resetHistory = false;
 
 			if (settings.fSharpness > 0.0f && tempTexture && tempTexture->resource &&
-				tempTexture->uav && rcasShader && rcasCB && workingTexture->srv) {
+				tempTexture->uav && rcasShader && rcasCB && dlssOutputTexture->srv) {
 
 				float sharpness = settings.fSharpness;
 				if (sharpness < 0.0f) sharpness = 0.0f;
@@ -753,13 +751,13 @@ namespace F4R_Upscaling
 				constants.sharpness = exp2f(2.0f * sharpness - 2.0f);
 				ctx->UpdateSubresource(rcasCB, 0, nullptr, &constants, 0, 0);
 
-				ID3D11ShaderResourceView* srvs[1] = { workingTexture->srv };
+				ID3D11ShaderResourceView* srvs[1] = { dlssOutputTexture->srv };
 				RunComputePass(ctx, rcasShader, rcasCB, srvs, 1, tempTexture->uav,
 					(state.screenWidth + 7) / 8, (state.screenHeight + 7) / 8);
 
 				ctx->CopyResource(backBufferResource, tempTexture->resource);
 			} else {
-				ctx->CopyResource(backBufferResource, workingTexture->resource);
+				ctx->CopyResource(backBufferResource, dlssOutputTexture->resource);
 			}
 		}
 #endif
@@ -868,9 +866,60 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		*reinterpret_cast<bool*>(enableTAAReloc.GetAddress()) = true;
 	}
 
+	void Upscaling::RefreshSamplerCache(SamplerStates* a_states, float a_bias)
+	{
+		if (!a_states) return;
+
+		for (int i = 0; i < 320; i++) {
+			if (originalSamplerStates[i] != a_states->a[i]) {
+				if (originalSamplerStates[i]) {
+					originalSamplerStates[i]->Release();
+				}
+				originalSamplerStates[i] = a_states->a[i];
+				if (originalSamplerStates[i]) {
+					originalSamplerStates[i]->AddRef();
+				}
+				samplerCacheValid = false;
+			}
+		}
+
+		if (!samplerCacheValid || cachedSamplerBias != a_bias) {
+			RebuildSamplerCache(a_bias);
+		}
+	}
+
+	void Upscaling::RebuildSamplerCache(float a_bias)
+	{
+		auto* device = GetRenderer();
+
+		for (int i = 0; i < 320; i++) {
+			if (biasedSamplerStates[i]) {
+				biasedSamplerStates[i]->Release();
+				biasedSamplerStates[i] = nullptr;
+			}
+
+			ID3D11SamplerState* src = originalSamplerStates[i];
+			if (src && device) {
+				D3D11_SAMPLER_DESC desc;
+				src->GetDesc(&desc);
+				if (desc.Filter == D3D11_FILTER_ANISOTROPIC) {
+					desc.MaxAnisotropy = 8;
+					desc.MipLODBias = a_bias;
+					HRESULT hr = device->CreateSamplerState(&desc, &biasedSamplerStates[i]);
+					if (FAILED(hr)) {
+						biasedSamplerStates[i] = nullptr;
+					}
+				}
+			}
+		}
+
+		cachedSamplerBias = a_bias;
+		samplerCacheValid = true;
+	}
+
 	void Upscaling::OverrideSamplerStates()
 	{
-		if (!upsclEnabled) return;
+		if (!upsclEnabled || !samplerBiasActive) return;
 
 		auto* samplerStates = GetGlobalSamplers();
 		if (!samplerStates) return;
@@ -884,7 +933,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 
 	void Upscaling::ResetSamplerStates()
 	{
-		if (!upsclEnabled) return;
+		if (!upsclEnabled || !samplerBiasActive) return;
 
 		auto* samplerStates = GetGlobalSamplers();
 		if (!samplerStates) return;
@@ -1113,6 +1162,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			motionVectorTexture.reset();
 			tempTexture.reset();
 			workingTexture.reset();
+			dlssOutputTexture.reset();
 #if F4R_HAS_FSR3
 			fidelityFX.reset();
 #endif
@@ -1201,6 +1251,37 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			} else {
 				REX::LogDebug("workingTexture {}x{} fmt={}", texDesc.Width, texDesc.Height, static_cast<int>(backBufferFormat));
 			}
+		}
+
+		if (mode == Method::DLSS && !dlssOutputTexture) {
+			dlssOutputTexture = std::make_unique<Texture2D>();
+			D3D11_TEXTURE2D_DESC texDesc = {};
+			texDesc.Width = state.screenWidth;
+			texDesc.Height = state.screenHeight;
+			texDesc.MipLevels = 1;
+			texDesc.ArraySize = 1;
+			texDesc.Format = backBufferFormat;
+			texDesc.SampleDesc.Count = 1;
+			texDesc.Usage = D3D11_USAGE_DEFAULT;
+			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_RENDER_TARGET;
+			HRESULT hr = device->CreateTexture2D(&texDesc, nullptr, &dlssOutputTexture->resource);
+			if (FAILED(hr)) {
+				REX::LogError("CreateTexture2D(dlssOutputTexture) failed hr=0x{:x}", static_cast<uint32_t>(hr));
+				dlssOutputTexture.reset();
+				return;
+			}
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = typedFormat;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			hr = device->CreateShaderResourceView(dlssOutputTexture->resource, &srvDesc, &dlssOutputTexture->srv);
+			if (FAILED(hr)) {
+				REX::LogError("CreateShaderResourceView(dlssOutputTexture) failed hr=0x{:x}", static_cast<uint32_t>(hr));
+				dlssOutputTexture.reset();
+				return;
+			}
+			REX::LogDebug("dlssOutputTexture {}x{} fmt={}", texDesc.Width, texDesc.Height, static_cast<int>(backBufferFormat));
 		}
 #endif
 
