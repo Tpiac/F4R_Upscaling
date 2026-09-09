@@ -58,7 +58,6 @@ namespace F4R_Upscaling
 		void Initialize();
 		void CheckFeatures(IDXGIAdapter* a_adapter);
 		void PostDevice();
-		void DestroyDLSSResources();
 
 		bool AcquireFrameToken();
 		void UpdateLatency();

@@ -1,7 +1,6 @@
 #include "PCH.hpp"
 #include "Upscaling.hpp"
 #include <Detours.h>
-#include <unordered_map>
 
 namespace
 {
@@ -72,7 +71,11 @@ namespace
 		auto& up = Upscaling::GetSingleton();
 		up.Apply();
 
-		if (up.upsclEnabled && up.currentScale < 0.999f) {
+		bool containerOpen = false;
+		if (auto* ui = RE::UI::GetSingleton()) {
+			containerOpen = ui->IsMenuOpen(RE::BSFixedString("ContainerMenu")).value_or(false);
+		}
+		if (up.upsclEnabled && up.currentScale < 0.999f && !containerOpen) {
 			up.BuildFlareDepth(*a_this);
 		}
 
@@ -144,6 +147,11 @@ namespace
 
 	void Hook_Effects_PreserveJitter(RenderTargetManager* a_this, std::uint32_t a_p2, std::uint32_t a_p3, std::uint32_t a_p4, std::uint32_t a_p5)
 	{
+		auto& up = Upscaling::GetSingleton();
+		if (!up.upsclEnabled) {
+			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
+			return;
+		}
 		auto& state = State::GetSingleton();
 		float savedX = state.offsetX;
 		float savedY = state.offsetY;
@@ -205,6 +213,19 @@ void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 	up.PopFlareDepth();
 }
 
+	using VatsTarget_SetPixelConstantFunc = void(void*, std::uint32_t, float, float);
+	VatsTarget_SetPixelConstantFunc* g_originalVatsTarget_SetPixelConstant = nullptr;
+
+	void Hook_VatsTarget_SetPixelConstant(void* a_param, std::uint32_t a_slot, float a_f3, float a_f4)
+	{
+		auto& up = Upscaling::GetSingleton();
+		if (up.upsclEnabled && up.currentScale < 0.999f && up.currentScale > 0.001f) {
+			a_f3 *= up.currentScale;
+			a_f4 *= up.currentScale;
+		}
+		g_originalVatsTarget_SetPixelConstant(a_param, a_slot, a_f3, a_f4);
+	}
+
 	using SSLRRaytracing_SkipInQualityModesFunc = void(RE::BSShader*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 	SSLRRaytracing_SkipInQualityModesFunc* g_originalSSLRRaytracing_SkipInQualityModes = nullptr;
 
@@ -238,72 +259,10 @@ void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 			}
 		}
 	}
-
-	std::unordered_map<ID3D11SamplerState*, ID3D11SamplerState*> g_samplerCache;
-	constexpr std::size_t kSamplerCacheLimit = 512;
-
-	ID3D11SamplerState* EnsureCappedSampler(ID3D11SamplerState* a_original)
-	{
-		if (!a_original) return nullptr;
-		auto it = g_samplerCache.find(a_original);
-		if (it != g_samplerCache.end()) return it->second;
-
-		if (g_samplerCache.size() >= kSamplerCacheLimit) {
-			for (const auto& [key, value] : g_samplerCache) {
-				if (value && value != key) {
-					value->Release();
-				}
-			}
-			g_samplerCache.clear();
-		}
-
-		D3D11_SAMPLER_DESC desc;
-		a_original->GetDesc(&desc);
-		if (desc.Filter == D3D11_FILTER_ANISOTROPIC && desc.MaxAnisotropy > 8) {
-			desc.MaxAnisotropy = 8;
-			auto* device = GetRenderer();
-			ID3D11SamplerState* capped = nullptr;
-			if (device && SUCCEEDED(device->CreateSamplerState(&desc, &capped))) {
-				g_samplerCache[a_original] = capped;
-				return capped;
-			}
-		}
-		g_samplerCache[a_original] = a_original;
-		return a_original;
-	}
-
-	using PSSetSamplersFunc = void(ID3D11DeviceContext*, UINT, UINT, ID3D11SamplerState* const*);
-	PSSetSamplersFunc* g_originalPSSetSamplers = nullptr;
-	bool g_contextHooksInstalled = false;
-
-	void Hook_PSSetSamplers(ID3D11DeviceContext* a_ctx, UINT a_startSlot, UINT a_numSamplers, ID3D11SamplerState* const* a_samplers)
-	{
-		ID3D11SamplerState* capped[16] = {};
-		bool changed = false;
-		for (UINT i = 0; i < a_numSamplers && i < 16; i++) {
-			capped[i] = EnsureCappedSampler(a_samplers[i]);
-			if (capped[i] != a_samplers[i]) changed = true;
-		}
-		g_originalPSSetSamplers(a_ctx, a_startSlot, a_numSamplers, changed ? capped : a_samplers);
-	}
 }
 
 namespace F4R_Upscaling
 {
-	void InstallContextHooks()
-	{
-		if (g_contextHooksInstalled) return;
-		auto* ctx = GetImmediateContext();
-		if (!ctx) return;
-
-		auto vtableAddr = reinterpret_cast<uintptr_t>(*reinterpret_cast<void**>(ctx));
-		auto result = Detours::X64::DetourVTable(vtableAddr,
-			reinterpret_cast<uintptr_t>(&Hook_PSSetSamplers), 13);
-		g_originalPSSetSamplers = reinterpret_cast<PSSetSamplersFunc*>(result);
-		g_contextHooksInstalled = true;
-		REX::LogDebug("PSSetSamplers hook installed");
-	}
-
 	void Upscaling::InstallHooks()
 	{
 		REX::LogDebug("Installing hooks...");
@@ -390,6 +349,32 @@ namespace F4R_Upscaling
 			auto result = Detours::X64::DetourFunction(addr, reinterpret_cast<std::uintptr_t>(&Hook_LensFlare_ForceFullResDepth));
 			g_originalLensFlare_ForceFullResDepth = reinterpret_cast<LensFlare_ForceFullResDepthFunc*>(result);
 			LogHookResult("LensFlare_ForceFullResDepth", result);
+		}
+
+		{
+			bool vatsHooked = false;
+			if (IsAE() || IsNG()) {
+				try {
+					auto addr = REL::Relocation{ REL::Id<>{ 0x235E9F } }.GetAddress() + 0x110;
+					if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+						auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
+						g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
+						vatsHooked = (result != 0);
+					}
+				} catch (...) {
+				}
+			} else {
+				try {
+					auto addr = REL::Relocation{ REL::Id<>{ 0xFE897 } }.GetAddress() + 0xBB;
+					if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+						auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
+						g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
+						vatsHooked = (result != 0);
+					}
+				} catch (...) {
+				}
+			}
+			LogHookResult("VatsTargetOutline", vatsHooked ? 1 : 0);
 		}
 
 		if (!g_enbLoaded) {

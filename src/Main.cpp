@@ -124,7 +124,7 @@ namespace
 
 		std::string content =
 			"[Settings]\n"
-			"; Settings apply in-game instantly without restarting.\n"
+			"; Settings apply in-game without restarting.\n"
 			"\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
 			"fSharpness=0.5\n"
@@ -151,7 +151,7 @@ namespace
 
 		std::string content =
 			"[Settings]\n"
-			"; Settings apply in-game instantly without restarting.\n"
+			"; Settings apply in-game without restarting.\n"
 			"\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
 			"fSharpness=0.5\n"
@@ -175,7 +175,7 @@ namespace
 
 		std::string content =
 			"[Settings]\n"
-			"; Settings marked with (*) apply in-game instantly without restarting.\n"
+			"; Settings marked with (*) apply in-game without restarting.\n"
 			"\n"
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
 			"fSharpness=0.5\n"
@@ -199,7 +199,7 @@ namespace
 
 		std::string content =
 			"[Settings]\n"
-			"; Settings marked with (*) apply in-game instantly without restarting.\n"
+			"; Settings marked with (*) apply in-game without restarting.\n"
 			"; (*) Applies to DLSS & FSR3 only. For XeSS, only fAnisotropicMipBias works in realtime.\n"
 			"\n"
 			"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
@@ -258,7 +258,7 @@ namespace
 			{
 				F4R_Upscaling::Upscaling::GetSingleton().InvalidateFlareDepth();
 				F4R_Upscaling::Upscaling::GetSingleton().RequestReset();
-				F4R_Upscaling::Upscaling::GetSingleton().PollRuntimeSettings();
+				F4R_Upscaling::Upscaling::GetSingleton().PollSettingsChanged();
 				break;
 			}
 		default:

@@ -196,17 +196,6 @@ namespace F4R_Upscaling
 		}
 	}
 
-	void Streamline::DestroyDLSSResources()
-	{
-		if (!featureDLSS || !slDLSSSetOptions || !slFreeResources)
-			return;
-
-		sl::DLSSOptions options{};
-		options.mode = static_cast<sl::DLSSMode>(0xFFFFFFFFu);
-		slDLSSSetOptions(viewport, options);
-		slFreeResources(sl::kFeatureDLSS, viewport);
-	}
-
 	void Streamline::UpdateConstants(float a_jitterX, float a_jitterY)
 	{
 		sl::Constants constants{};

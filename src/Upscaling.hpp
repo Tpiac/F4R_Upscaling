@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+
 #include "Common.hpp"
 
 #if F4R_HAS_FSR3
@@ -38,6 +40,7 @@ namespace F4R_Upscaling
 		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
 		void InvalidateFlareDepth();
 		void PollRuntimeSettings();
+		void PollSettingsChanged();
         void RequestReset();
 		void BuildFlareDepth(RE::BSGraphics::RenderTargetManager& a_rtMgr);
 		void PushFlareDepth();
@@ -95,12 +98,12 @@ namespace F4R_Upscaling
 		std::string settingsIniPath;
 		std::uint64_t settingsIniWriteTime = 0;
 		bool settingsIniHasTime = false;
+		std::atomic<bool> pendingSettingsRefresh = false;
 		bool resourcesCreated = false;
 		uint32_t cachedWidth = 0;
 		uint32_t cachedHeight = 0;
 		DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
 		int32_t cachedMethod = -1;
-		float cachedSharpness = -1.0f;
 		int32_t cachedQuality = -1;
 #if F4R_HAS_FSR3
 		std::uint32_t fsrRetryFrame = 0;
@@ -111,6 +114,4 @@ namespace F4R_Upscaling
 
 		int startupFrameGuard = 0;
 	};
-
-	void InstallContextHooks();
 }
