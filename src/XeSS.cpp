@@ -219,7 +219,7 @@ namespace F4R_Upscaling
 
 		float inputScale = 1.0f;
 		if (quality == XESS_QUALITY_SETTING_QUALITY) inputScale = 0.65f;
-		else if (quality == XESS_QUALITY_SETTING_BALANCED) inputScale = 0.57f;
+		else if (quality == XESS_QUALITY_SETTING_BALANCED) inputScale = 0.59f;
 		else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) inputScale = 0.5f;
 
 		xess_d3d12_init_params_t params{};

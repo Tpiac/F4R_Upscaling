@@ -555,21 +555,21 @@ namespace F4R_Upscaling
 #if F4R_HAS_DLSS
 		if (mode == Method::DLSS && upsclEnabled && !g_enbLoaded) {
 			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
 #if F4R_HAS_FSR3
 		if (mode == Method::FSR3 && upsclEnabled && !g_enbLoaded) {
 			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
 #if F4R_HAS_XESS
 		if (mode == Method::XeSS && upsclEnabled && !g_enbLoaded) {
 			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
@@ -1556,7 +1556,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::DLSS) && !g_enbLoaded) {
 			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("DLSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
@@ -1565,7 +1565,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::FSR3)) {
 			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("FSR3 {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
@@ -1575,7 +1575,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::XeSS)) {
 			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("XeSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
