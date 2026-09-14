@@ -176,6 +176,7 @@ namespace
 		auto& up = Upscaling::GetSingleton();
 		up.InvalidateFlareDepth();
 		up.RequestReset();
+		up.ReleaseHBAOCache();
 	}
 
 	using ImageSpace_RestoreDynamicResolutionFunc = void(void*);
@@ -226,6 +227,20 @@ void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 		g_originalVatsTarget_SetPixelConstant(a_param, a_slot, a_f3, a_f4);
 	}
 
+	using HBAO_RenderFunc = void(void*);
+	HBAO_RenderFunc* g_originalHBAO_Render = nullptr;
+
+	void Hook_HBAO_Render(void* a_this)
+	{
+		auto& up = Upscaling::GetSingleton();
+		if (up.EnterHBAO()) {
+			g_originalHBAO_Render(a_this);
+			up.ExitHBAO();
+			return;
+		}
+		g_originalHBAO_Render(a_this);
+	}
+
 	using SSLRRaytracing_SkipInQualityModesFunc = void(RE::BSShader*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 	SSLRRaytracing_SkipInQualityModesFunc* g_originalSSLRRaytracing_SkipInQualityModes = nullptr;
 
@@ -263,6 +278,14 @@ void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
 
 namespace F4R_Upscaling
 {
+	void Upscaling::InvokeHBAODynRes(bool a_dynamic)
+	{
+		if (g_originalPostRender_UpscAndPreparePostFX) {
+			auto& rtMgr = RenderTargetManager::GetSingleton();
+			g_originalPostRender_UpscAndPreparePostFX(&rtMgr, a_dynamic);
+		}
+	}
+
 	void Upscaling::InstallHooks()
 	{
 		REX::LogDebug("Installing hooks...");
@@ -375,6 +398,20 @@ namespace F4R_Upscaling
 				}
 			}
 			LogHookResult("VatsTargetOutline", vatsHooked ? 1 : 0);
+		}
+
+		{
+			bool hbaoHooked = false;
+			auto addr = ResolveAddr(0x2857480 + 0x1BA, 0x235FF1, 0x397);
+			try {
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_HBAO_Render));
+					g_originalHBAO_Render = reinterpret_cast<HBAO_RenderFunc*>(result);
+					hbaoHooked = (result != 0);
+				}
+			} catch (...) {
+			}
+			LogHookResult("NVHBAO", hbaoHooked ? 1 : 0);
 		}
 
 		if (!g_enbLoaded) {

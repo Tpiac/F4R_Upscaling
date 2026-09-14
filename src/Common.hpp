@@ -96,7 +96,9 @@ namespace F4R_Upscaling
 			kSSRBlurredExtra = 9,
 			kSSRDirection = 10,
 			kSSRMask = 11,
+			kGbufferNormal = 20,
 			kMotionVectors = 29,
+			kSSAOFinal = 25,
 		};
 	}
 

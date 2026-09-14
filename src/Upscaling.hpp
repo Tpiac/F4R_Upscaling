@@ -46,6 +46,12 @@ namespace F4R_Upscaling
 		void PushFlareDepth();
 		void PopFlareDepth();
 
+		void RefreshHBAOCache();
+		void ReleaseHBAOCache();
+		bool EnterHBAO();
+		void ExitHBAO();
+		void InvokeHBAODynRes(bool a_dynamic);
+
 		Settings settings;
 
 		bool upsclEnabled = false;
@@ -75,6 +81,39 @@ namespace F4R_Upscaling
 		bool flareValid = false;
 		std::uint32_t flareWidth = 0;
 		std::uint32_t flareHeight = 0;
+
+		static constexpr std::uint32_t kScaledTargetSpan = 101;
+		static constexpr std::uint32_t kHBAOMetaCount = 100;
+
+		struct HBAOSlot
+		{
+			ID3D11Texture2D* texture = nullptr;
+			ID3D11Texture2D* copyTexture = nullptr;
+			ID3D11RenderTargetView* rtView = nullptr;
+			ID3D11ShaderResourceView* srView = nullptr;
+			ID3D11ShaderResourceView* copySRView = nullptr;
+			ID3D11UnorderedAccessView* uaView = nullptr;
+		};
+
+		std::unique_ptr<Texture2D> hbaoTargets[kScaledTargetSpan];
+		HBAOSlot hbaoBackedUp[kScaledTargetSpan];
+		bool hbaoMapped[kScaledTargetSpan]{};
+		D3D11_TEXTURE2D_DESC hbaoFullDesc[kScaledTargetSpan]{};
+		RE::BSGraphics::RenderTargetProperties hbaoSavedMeta[kHBAOMetaCount];
+		bool hbaoMetaHeld = false;
+		std::unique_ptr<Texture2D> hbaoDepth;
+		D3D11_TEXTURE2D_DESC hbaoDepthFullDesc{};
+		bool hbaoDepthDescribed = false;
+		ID3D11ShaderResourceView* hbaoDepthBackedUp = nullptr;
+		bool hbaoDepthMapped = false;
+		ID3D11ComputeShader* hbaoDepthShader = nullptr;
+		std::uint32_t hbaoDepthFrame = 0;
+		bool hbaoActive = false;
+		float hbaoCachedWidthRatio = 0.0f;
+		float hbaoCachedHeightRatio = 0.0f;
+		float hbaoSavedWidthRatio = 1.0f;
+		float hbaoSavedHeightRatio = 1.0f;
+		bool hbaoCacheValid = false;
 
 		ID3D11SamplerState* biasedSamplerStates[320]{};
 		ID3D11SamplerState* originalSamplerStates[320]{};

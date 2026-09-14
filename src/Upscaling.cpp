@@ -204,6 +204,14 @@ namespace F4R_Upscaling
 				originalSamplerStates[i] = nullptr;
 			}
 		}
+		if (hbaoDepthBackedUp) {
+			hbaoDepthBackedUp->Release();
+			hbaoDepthBackedUp = nullptr;
+		}
+		if (hbaoDepthShader) {
+			hbaoDepthShader->Release();
+			hbaoDepthShader = nullptr;
+		}
 	}
 
 	void Upscaling::LoadSettings(const std::string& a_iniPath)
@@ -546,22 +554,22 @@ namespace F4R_Upscaling
 		float desiredScale = 1.0f;
 #if F4R_HAS_DLSS
 		if (mode == Method::DLSS && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.6666667f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.5882353f;
+			if (settings.iQualityMode == 1) desiredScale = 0.65f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
 #if F4R_HAS_FSR3
 		if (mode == Method::FSR3 && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.6666667f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.5882353f;
+			if (settings.iQualityMode == 1) desiredScale = 0.65f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
 #if F4R_HAS_XESS
 		if (mode == Method::XeSS && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.6666667f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.5882353f;
+			if (settings.iQualityMode == 1) desiredScale = 0.65f;
+			else if (settings.iQualityMode == 2) desiredScale = 0.57f;
 			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
 		}
 #endif
@@ -632,6 +640,7 @@ namespace F4R_Upscaling
 
 		UpdateGameSettings();
 		CheckResources();
+		RefreshHBAOCache();
 	}
 
 	void Upscaling::Apply()
@@ -1545,18 +1554,18 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		cachedMethod = settings.iMethod;
 		cachedQuality = settings.iQualityMode;
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::DLSS) && !g_enbLoaded) {
-			float s = 0.6666667f;
+			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.5882353f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("DLSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
 #if F4R_HAS_FSR3
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::FSR3)) {
-			float s = 0.6666667f;
+			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.5882353f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("FSR3 {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
@@ -1564,13 +1573,569 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 #endif
 #if F4R_HAS_XESS
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::XeSS)) {
-			float s = 0.6666667f;
+			float s = 0.65f;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.5882353f; qname = "Balanced"; }
+			if (settings.iQualityMode == 2) { s = 0.57f; qname = "Balanced"; }
 			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("XeSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
 #endif
+	}
+
+	namespace
+	{
+		constexpr std::uint32_t kScaledTargetCount = 2;
+		const std::uint32_t kScaledTargets[kScaledTargetCount] = {
+			RenderTarget::kGbufferNormal, RenderTarget::kSSAOFinal
+		};
+	}
+
+	bool Upscaling::EnterHBAO()
+	{
+		if (!upsclEnabled || currentScale >= 0.999f) {
+			return false;
+		}
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		if (GetDynWidthRatio(rtMgr) >= 0.999f && GetDynHeightRatio(rtMgr) >= 0.999f) {
+			return false;
+		}
+		if (hbaoActive) {
+			return false;
+		}
+		RefreshHBAOCache();
+		if (!hbaoCacheValid) {
+			return false;
+		}
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		if (!rendererData || !ctx) {
+			return false;
+		}
+		for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+			std::uint32_t idx = kScaledTargets[k];
+			if (idx >= rendererData->renderTargets.size()) {
+				continue;
+			}
+			auto* liveTex = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[idx].texture);
+			if (!liveTex) {
+				continue;
+			}
+			D3D11_TEXTURE2D_DESC liveDesc{};
+			liveTex->GetDesc(&liveDesc);
+			const auto& fullDesc = hbaoFullDesc[idx];
+			if (liveDesc.Width != fullDesc.Width || liveDesc.Height != fullDesc.Height ||
+				liveDesc.Format != fullDesc.Format ||
+				liveDesc.SampleDesc.Count != fullDesc.SampleDesc.Count ||
+				liveDesc.SampleDesc.Quality != fullDesc.SampleDesc.Quality) {
+				ReleaseHBAOCache();
+				RefreshHBAOCache();
+				if (!hbaoCacheValid) {
+					return false;
+				}
+				break;
+			}
+		}
+		if (!hbaoDepthDescribed) {
+			return false;
+		}
+		auto* depthTex = reinterpret_cast<ID3D11Texture2D*>(
+			rendererData->depthStencilTargets[DepthStencil::kMain].texture);
+		if (!depthTex) {
+			return false;
+		}
+		D3D11_TEXTURE2D_DESC depthDesc{};
+		depthTex->GetDesc(&depthDesc);
+		if (depthDesc.Width != hbaoDepthFullDesc.Width || depthDesc.Height != hbaoDepthFullDesc.Height ||
+			depthDesc.Format != hbaoDepthFullDesc.Format) {
+			ReleaseHBAOCache();
+			RefreshHBAOCache();
+			if (!hbaoCacheValid) {
+				return false;
+			}
+		}
+		auto& state = RE::BSGraphics::State::GetSingleton();
+		if (hbaoDepthFrame != state.frameCount || hbaoDepthFrame == 0) {
+			auto* depthSRV = reinterpret_cast<ID3D11ShaderResourceView*>(
+				rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
+			if (!depthSRV || !hbaoDepth || !hbaoDepth->resource || !hbaoDepth->uav || !hbaoDepthShader) {
+				return false;
+			}
+			D3D11_TEXTURE2D_DESC fedDesc{};
+			hbaoDepth->resource->GetDesc(&fedDesc);
+			ID3D11ComputeShader* keptCS = nullptr;
+			ID3D11ShaderResourceView* keptSRV = nullptr;
+			ID3D11UnorderedAccessView* keptUAV = nullptr;
+			ID3D11Buffer* keptCB = nullptr;
+			ctx->CSGetShader(&keptCS, nullptr, nullptr);
+			ctx->CSGetShaderResources(0, 1, &keptSRV);
+			ctx->CSGetUnorderedAccessViews(0, 1, &keptUAV);
+			ctx->CSGetConstantBuffers(0, 1, &keptCB);
+			ctx->CSSetShaderResources(0, 1, &depthSRV);
+			ID3D11UnorderedAccessView* fedUAVs[1] = { hbaoDepth->uav };
+			ctx->CSSetUnorderedAccessViews(0, 1, fedUAVs, nullptr);
+			ctx->CSSetShader(hbaoDepthShader, nullptr, 0);
+			ctx->Dispatch((fedDesc.Width + 7) / 8, (fedDesc.Height + 7) / 8, 1);
+			ID3D11ShaderResourceView* clearedSRVs[1] = { nullptr };
+			ctx->CSSetShaderResources(0, 1, clearedSRVs);
+			ID3D11UnorderedAccessView* clearedUAVs[1] = { nullptr };
+			ctx->CSSetUnorderedAccessViews(0, 1, clearedUAVs, nullptr);
+			ctx->CSSetShader(nullptr, nullptr, 0);
+			ctx->CSSetShader(keptCS, nullptr, 0);
+			ctx->CSSetShaderResources(0, 1, &keptSRV);
+			ctx->CSSetUnorderedAccessViews(0, 1, &keptUAV, nullptr);
+			ctx->CSSetConstantBuffers(0, 1, &keptCB);
+			if (keptCS) {
+				keptCS->Release();
+			}
+			if (keptSRV) {
+				keptSRV->Release();
+			}
+			if (keptUAV) {
+				keptUAV->Release();
+			}
+			if (keptCB) {
+				keptCB->Release();
+			}
+			hbaoDepthFrame = state.frameCount;
+		}
+		hbaoSavedWidthRatio = GetDynWidthRatio(rtMgr);
+		hbaoSavedHeightRatio = GetDynHeightRatio(rtMgr);
+		if (hbaoDepth && hbaoDepth->srv) {
+			auto* liveDepth = reinterpret_cast<ID3D11ShaderResourceView*>(
+				rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
+			if (liveDepth && !hbaoDepthBackedUp) {
+				hbaoDepthBackedUp = liveDepth;
+				hbaoDepthBackedUp->AddRef();
+				rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
+					reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoDepth->srv);
+				hbaoDepthMapped = true;
+			}
+		}
+		for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+			std::uint32_t idx = kScaledTargets[k];
+			if (idx >= rendererData->renderTargets.size()) {
+				continue;
+			}
+			if (!hbaoTargets[idx] || !hbaoTargets[idx]->resource) {
+				continue;
+			}
+			auto& live = rendererData->renderTargets[idx];
+			hbaoBackedUp[idx].texture = reinterpret_cast<ID3D11Texture2D*>(live.texture);
+			hbaoBackedUp[idx].copyTexture = reinterpret_cast<ID3D11Texture2D*>(live.copyTexture);
+			hbaoBackedUp[idx].rtView = reinterpret_cast<ID3D11RenderTargetView*>(live.rtView);
+			hbaoBackedUp[idx].srView = reinterpret_cast<ID3D11ShaderResourceView*>(live.srView);
+			hbaoBackedUp[idx].copySRView = reinterpret_cast<ID3D11ShaderResourceView*>(live.copySRView);
+			hbaoBackedUp[idx].uaView = reinterpret_cast<ID3D11UnorderedAccessView*>(live.uaView);
+			live.texture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoTargets[idx]->resource);
+			live.copyTexture = nullptr;
+			live.rtView = reinterpret_cast<REX::W32::ID3D11RenderTargetView*>(hbaoTargets[idx]->rtv);
+			live.srView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoTargets[idx]->srv);
+			live.copySRView = nullptr;
+			live.uaView = reinterpret_cast<REX::W32::ID3D11UnorderedAccessView*>(hbaoTargets[idx]->uav);
+			hbaoMapped[idx] = true;
+			if (idx == RenderTarget::kGbufferNormal && hbaoBackedUp[idx].texture) {
+				D3D11_TEXTURE2D_DESC lowDesc{};
+				hbaoTargets[idx]->resource->GetDesc(&lowDesc);
+				D3D11_BOX seedBox{};
+				seedBox.left = 0;
+				seedBox.top = 0;
+				seedBox.front = 0;
+				seedBox.right = lowDesc.Width;
+				seedBox.bottom = lowDesc.Height;
+				seedBox.back = 1;
+				ctx->CopySubresourceRegion(hbaoTargets[idx]->resource, 0, 0, 0, 0, hbaoBackedUp[idx].texture, 0, &seedBox);
+			}
+		}
+		if (!hbaoMetaHeld) {
+			for (std::uint32_t i = 0; i < kHBAOMetaCount; i++) {
+				hbaoSavedMeta[i] = rtMgr.renderTargetDataArray[i];
+			}
+			hbaoMetaHeld = true;
+		}
+		float widthRatio = GetDynWidthRatio(rtMgr);
+		float heightRatio = GetDynHeightRatio(rtMgr);
+		for (std::uint32_t i = 0; i < kHBAOMetaCount; i++) {
+			auto& meta = rtMgr.renderTargetDataArray[i];
+			meta.width = static_cast<std::uint32_t>(static_cast<float>(hbaoSavedMeta[i].width) * widthRatio);
+			meta.height = static_cast<std::uint32_t>(static_cast<float>(hbaoSavedMeta[i].height) * heightRatio);
+		}
+		ID3D11ShaderResourceView* boundPS[16]{};
+		ctx->PSGetShaderResources(0, 16, boundPS);
+		for (std::uint32_t slot = 0; slot < 16; slot++) {
+			auto* current = boundPS[slot];
+			if (!current) {
+				continue;
+			}
+			for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+				std::uint32_t idx = kScaledTargets[k];
+				if (idx >= rendererData->renderTargets.size()) {
+					continue;
+				}
+				auto* lowSRV = hbaoTargets[idx] ? hbaoTargets[idx]->srv : nullptr;
+				auto* fullSRV = hbaoMapped[idx] ? hbaoBackedUp[idx].srView : nullptr;
+				if (fullSRV && lowSRV && current == fullSRV) {
+					ctx->PSSetShaderResources(slot, 1, &lowSRV);
+					break;
+				}
+			}
+			current->Release();
+		}
+		InvokeHBAODynRes(false);
+		GetDynWidthRatio(rtMgr) = 1.0f;
+		GetDynHeightRatio(rtMgr) = 1.0f;
+		hbaoActive = true;
+		return true;
+	}
+
+	void Upscaling::ExitHBAO()
+	{
+		if (!hbaoActive) {
+			return;
+		}
+		hbaoActive = false;
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		if (rendererData && ctx) {
+			std::uint32_t idx = RenderTarget::kSSAOFinal;
+			if (idx < kScaledTargetSpan && hbaoMapped[idx] && hbaoTargets[idx] && hbaoTargets[idx]->resource &&
+				hbaoBackedUp[idx].texture) {
+				D3D11_TEXTURE2D_DESC lowDesc{};
+				hbaoTargets[idx]->resource->GetDesc(&lowDesc);
+				D3D11_BOX resultBox{};
+				resultBox.left = 0;
+				resultBox.top = 0;
+				resultBox.front = 0;
+				resultBox.right = lowDesc.Width;
+				resultBox.bottom = lowDesc.Height;
+				resultBox.back = 1;
+				ctx->CopySubresourceRegion(hbaoBackedUp[idx].texture, 0, 0, 0, 0, hbaoTargets[idx]->resource, 0, &resultBox);
+			}
+		}
+		if (ctx && rendererData) {
+			ID3D11ShaderResourceView* boundPS[16]{};
+			ctx->PSGetShaderResources(0, 16, boundPS);
+			for (std::uint32_t slot = 0; slot < 16; slot++) {
+				auto* current = boundPS[slot];
+				if (!current) {
+					continue;
+				}
+				for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+					std::uint32_t idx = kScaledTargets[k];
+					if (idx >= rendererData->renderTargets.size()) {
+						continue;
+					}
+					auto* lowSRV = (hbaoMapped[idx] && hbaoTargets[idx]) ? hbaoTargets[idx]->srv : nullptr;
+					auto* fullSRV = hbaoMapped[idx] ? hbaoBackedUp[idx].srView : nullptr;
+					if (lowSRV && fullSRV && current == lowSRV) {
+						ctx->PSSetShaderResources(slot, 1, &fullSRV);
+						break;
+					}
+				}
+				current->Release();
+			}
+		}
+		if (rendererData) {
+			for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+				std::uint32_t idx = kScaledTargets[k];
+				if (idx >= rendererData->renderTargets.size()) {
+					continue;
+				}
+				if (!hbaoMapped[idx]) {
+					continue;
+				}
+				auto& live = rendererData->renderTargets[idx];
+				live.texture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].texture);
+				live.copyTexture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].copyTexture);
+				live.rtView = reinterpret_cast<REX::W32::ID3D11RenderTargetView*>(hbaoBackedUp[idx].rtView);
+				live.srView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].srView);
+				live.copySRView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].copySRView);
+				live.uaView = reinterpret_cast<REX::W32::ID3D11UnorderedAccessView*>(hbaoBackedUp[idx].uaView);
+				hbaoMapped[idx] = false;
+			}
+			for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+				std::uint32_t idx = kScaledTargets[k];
+				if (idx < kScaledTargetSpan) {
+					hbaoBackedUp[idx] = HBAOSlot{};
+				}
+			}
+		}
+		if (hbaoMetaHeld) {
+			for (std::uint32_t i = 0; i < kHBAOMetaCount; i++) {
+				rtMgr.renderTargetDataArray[i] = hbaoSavedMeta[i];
+			}
+			hbaoMetaHeld = false;
+		}
+		if (hbaoDepthMapped) {
+			if (rendererData && hbaoDepthBackedUp) {
+				rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
+					reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoDepthBackedUp);
+			}
+			if (hbaoDepthBackedUp) {
+				hbaoDepthBackedUp->Release();
+				hbaoDepthBackedUp = nullptr;
+			}
+			hbaoDepthMapped = false;
+		}
+		InvokeHBAODynRes(true);
+		GetDynWidthRatio(rtMgr) = hbaoSavedWidthRatio;
+		GetDynHeightRatio(rtMgr) = hbaoSavedHeightRatio;
+	}
+
+	void Upscaling::RefreshHBAOCache()
+	{
+		if (!upsclEnabled || currentScale >= 0.999f) {
+			ReleaseHBAOCache();
+			return;
+		}
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		float widthRatio = GetDynWidthRatio(rtMgr);
+		float heightRatio = GetDynHeightRatio(rtMgr);
+		if (!rendererData || widthRatio >= 0.999f || heightRatio >= 0.999f ||
+			widthRatio <= 0.001f || heightRatio <= 0.001f) {
+			ReleaseHBAOCache();
+			return;
+		}
+		if (hbaoCacheValid && widthRatio == hbaoCachedWidthRatio && heightRatio == hbaoCachedHeightRatio) {
+			return;
+		}
+		ReleaseHBAOCache();
+		auto* device = GetRenderer();
+		if (!device) {
+			return;
+		}
+		for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+			std::uint32_t idx = kScaledTargets[k];
+			if (idx >= rendererData->renderTargets.size()) {
+				continue;
+			}
+			auto* liveTex = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[idx].texture);
+			if (!liveTex) {
+				continue;
+			}
+			D3D11_TEXTURE2D_DESC liveDesc{};
+			liveTex->GetDesc(&liveDesc);
+			std::uint32_t lowWidth = static_cast<std::uint32_t>(static_cast<float>(liveDesc.Width) * widthRatio);
+			std::uint32_t lowHeight = static_cast<std::uint32_t>(static_cast<float>(liveDesc.Height) * heightRatio);
+			if (lowWidth < 1) {
+				lowWidth = 1;
+			}
+			if (lowHeight < 1) {
+				lowHeight = 1;
+			}
+			if (lowWidth >= liveDesc.Width && lowHeight >= liveDesc.Height) {
+				continue;
+			}
+			auto slot = std::make_unique<Texture2D>();
+			D3D11_TEXTURE2D_DESC lowDesc = liveDesc;
+			lowDesc.Width = lowWidth;
+			lowDesc.Height = lowHeight;
+			if (FAILED(device->CreateTexture2D(&lowDesc, nullptr, &slot->resource))) {
+				REX::LogError("CreateTexture2D(hbaoTarget {}) failed", idx);
+				ReleaseHBAOCache();
+				return;
+			}
+			auto& live = rendererData->renderTargets[idx];
+			if (live.rtView) {
+				D3D11_RENDER_TARGET_VIEW_DESC rtDesc{};
+				reinterpret_cast<ID3D11RenderTargetView*>(live.rtView)->GetDesc(&rtDesc);
+				if (FAILED(device->CreateRenderTargetView(slot->resource, &rtDesc, &slot->rtv))) {
+					REX::LogError("CreateRenderTargetView(hbaoTarget {}) failed", idx);
+					ReleaseHBAOCache();
+					return;
+				}
+			}
+			if (live.srView) {
+				D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+				reinterpret_cast<ID3D11ShaderResourceView*>(live.srView)->GetDesc(&srvDesc);
+				if (srvDesc.ViewDimension == D3D11_SRV_DIMENSION_TEXTURE2D) {
+					srvDesc.Texture2D.MostDetailedMip = 0;
+					srvDesc.Texture2D.MipLevels = 1;
+				}
+				if (FAILED(device->CreateShaderResourceView(slot->resource, &srvDesc, &slot->srv))) {
+					REX::LogError("CreateShaderResourceView(hbaoTarget {}) failed", idx);
+					ReleaseHBAOCache();
+					return;
+				}
+			}
+			if (live.uaView) {
+				D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+				reinterpret_cast<ID3D11UnorderedAccessView*>(live.uaView)->GetDesc(&uavDesc);
+				if (FAILED(device->CreateUnorderedAccessView(slot->resource, &uavDesc, &slot->uav))) {
+					REX::LogError("CreateUnorderedAccessView(hbaoTarget {}) failed", idx);
+					ReleaseHBAOCache();
+					return;
+				}
+			}
+			hbaoFullDesc[idx] = liveDesc;
+			hbaoTargets[idx] = std::move(slot);
+		}
+		auto& liveDepth = rendererData->depthStencilTargets[DepthStencil::kMain];
+		auto* depthTex = reinterpret_cast<ID3D11Texture2D*>(liveDepth.texture);
+		if (!depthTex) {
+			ReleaseHBAOCache();
+			return;
+		}
+		D3D11_TEXTURE2D_DESC depthLiveDesc{};
+		depthTex->GetDesc(&depthLiveDesc);
+		std::uint32_t depthLowWidth = static_cast<std::uint32_t>(static_cast<float>(depthLiveDesc.Width) * widthRatio);
+		std::uint32_t depthLowHeight = static_cast<std::uint32_t>(static_cast<float>(depthLiveDesc.Height) * heightRatio);
+		if (depthLowWidth < 1) {
+			depthLowWidth = 1;
+		}
+		if (depthLowHeight < 1) {
+			depthLowHeight = 1;
+		}
+		auto depthSlot = std::make_unique<Texture2D>();
+		D3D11_TEXTURE2D_DESC depthLowDesc{};
+		depthLowDesc.Width = depthLowWidth;
+		depthLowDesc.Height = depthLowHeight;
+		depthLowDesc.MipLevels = 1;
+		depthLowDesc.ArraySize = 1;
+		depthLowDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		depthLowDesc.SampleDesc.Count = 1;
+		depthLowDesc.Usage = D3D11_USAGE_DEFAULT;
+		depthLowDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		if (FAILED(device->CreateTexture2D(&depthLowDesc, nullptr, &depthSlot->resource))) {
+			REX::LogError("CreateTexture2D(hbaoDepth) failed");
+			ReleaseHBAOCache();
+			return;
+		}
+		D3D11_SHADER_RESOURCE_VIEW_DESC depthSrvDesc{};
+		depthSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		depthSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		depthSrvDesc.Texture2D.MostDetailedMip = 0;
+		depthSrvDesc.Texture2D.MipLevels = 1;
+		if (FAILED(device->CreateShaderResourceView(depthSlot->resource, &depthSrvDesc, &depthSlot->srv))) {
+			REX::LogError("CreateShaderResourceView(hbaoDepth) failed");
+			ReleaseHBAOCache();
+			return;
+		}
+		D3D11_UNORDERED_ACCESS_VIEW_DESC depthUavDesc{};
+		depthUavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		depthUavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+		depthUavDesc.Texture2D.MipSlice = 0;
+		if (FAILED(device->CreateUnorderedAccessView(depthSlot->resource, &depthUavDesc, &depthSlot->uav))) {
+			REX::LogError("CreateUnorderedAccessView(hbaoDepth) failed");
+			ReleaseHBAOCache();
+			return;
+		}
+		if (!hbaoDepthShader) {
+			hbaoDepthShader = CreateComputeShaderFromBytecode(kDepthCopy, kDepthCopySize, device);
+		}
+		if (!hbaoDepthShader) {
+			REX::LogError("CreateComputeShader(hbaoDepth) failed");
+			ReleaseHBAOCache();
+			return;
+		}
+		hbaoDepthFullDesc = depthLiveDesc;
+		hbaoDepthDescribed = true;
+		hbaoDepth = std::move(depthSlot);
+		hbaoCachedWidthRatio = widthRatio;
+		hbaoCachedHeightRatio = heightRatio;
+		hbaoCacheValid = true;
+	}
+
+	void Upscaling::ReleaseHBAOCache()
+	{
+		if (hbaoActive) {
+			auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+			auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			auto* ctx = GetImmediateContext();
+			hbaoActive = false;
+			if (ctx && rendererData) {
+				ID3D11ShaderResourceView* boundPS[16]{};
+				ctx->PSGetShaderResources(0, 16, boundPS);
+				for (std::uint32_t slot = 0; slot < 16; slot++) {
+					auto* current = boundPS[slot];
+					if (!current) {
+						continue;
+					}
+					for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+						std::uint32_t idx = kScaledTargets[k];
+						if (idx >= rendererData->renderTargets.size()) {
+							continue;
+						}
+						auto* lowSRV = (hbaoMapped[idx] && hbaoTargets[idx]) ? hbaoTargets[idx]->srv : nullptr;
+						auto* fullSRV = hbaoMapped[idx] ? hbaoBackedUp[idx].srView : nullptr;
+						if (lowSRV && fullSRV && current == lowSRV) {
+							ctx->PSSetShaderResources(slot, 1, &fullSRV);
+							break;
+						}
+					}
+					current->Release();
+				}
+			}
+			if (rendererData) {
+				for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+					std::uint32_t idx = kScaledTargets[k];
+					if (idx >= rendererData->renderTargets.size()) {
+						continue;
+					}
+					if (!hbaoMapped[idx]) {
+						continue;
+					}
+					auto& live = rendererData->renderTargets[idx];
+					live.texture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].texture);
+					live.copyTexture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].copyTexture);
+					live.rtView = reinterpret_cast<REX::W32::ID3D11RenderTargetView*>(hbaoBackedUp[idx].rtView);
+					live.srView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].srView);
+					live.copySRView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].copySRView);
+					live.uaView = reinterpret_cast<REX::W32::ID3D11UnorderedAccessView*>(hbaoBackedUp[idx].uaView);
+					hbaoMapped[idx] = false;
+				}
+				for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
+					std::uint32_t idx = kScaledTargets[k];
+					if (idx < kScaledTargetSpan) {
+						hbaoBackedUp[idx] = HBAOSlot{};
+					}
+				}
+			}
+			if (hbaoMetaHeld) {
+				for (std::uint32_t i = 0; i < kHBAOMetaCount; i++) {
+					rtMgr.renderTargetDataArray[i] = hbaoSavedMeta[i];
+				}
+				hbaoMetaHeld = false;
+			}
+			if (hbaoDepthMapped) {
+				if (rendererData && hbaoDepthBackedUp) {
+					rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
+						reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoDepthBackedUp);
+				}
+				if (hbaoDepthBackedUp) {
+					hbaoDepthBackedUp->Release();
+					hbaoDepthBackedUp = nullptr;
+				}
+				hbaoDepthMapped = false;
+			}
+			InvokeHBAODynRes(true);
+			GetDynWidthRatio(rtMgr) = hbaoSavedWidthRatio;
+			GetDynHeightRatio(rtMgr) = hbaoSavedHeightRatio;
+		}
+		if (hbaoDepthBackedUp) {
+			hbaoDepthBackedUp->Release();
+			hbaoDepthBackedUp = nullptr;
+		}
+		if (hbaoDepthShader) {
+			hbaoDepthShader->Release();
+			hbaoDepthShader = nullptr;
+		}
+		hbaoDepthMapped = false;
+		for (std::uint32_t i = 0; i < kScaledTargetSpan; i++) {
+			hbaoTargets[i].reset();
+			hbaoBackedUp[i] = HBAOSlot{};
+			hbaoMapped[i] = false;
+			hbaoFullDesc[i] = D3D11_TEXTURE2D_DESC{};
+		}
+		hbaoDepth.reset();
+		hbaoDepthFullDesc = D3D11_TEXTURE2D_DESC{};
+		hbaoDepthDescribed = false;
+		hbaoDepthFrame = 0;
+		hbaoMetaHeld = false;
+		hbaoCacheValid = false;
+		hbaoCachedWidthRatio = 0.0f;
+		hbaoCachedHeightRatio = 0.0f;
 	}
 }
