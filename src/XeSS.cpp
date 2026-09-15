@@ -1,5 +1,6 @@
 #include "PCH.hpp"
 #include "XeSS.hpp"
+#include "Upscaling.hpp"
 
 #include <dxgi1_2.h>
 
@@ -218,9 +219,12 @@ namespace F4R_Upscaling
 		else if (a_qualityMode == 3) quality = XESS_QUALITY_SETTING_PERFORMANCE;
 
 		float inputScale = 1.0f;
-		if (quality == XESS_QUALITY_SETTING_QUALITY) inputScale = 0.65f;
-		else if (quality == XESS_QUALITY_SETTING_BALANCED) inputScale = 0.59f;
-		else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) inputScale = 0.5f;
+		{
+			auto& up = Upscaling::GetSingleton();
+			if (quality == XESS_QUALITY_SETTING_QUALITY) inputScale = up.settings.fQualityScale;
+			else if (quality == XESS_QUALITY_SETTING_BALANCED) inputScale = up.settings.fBalancedScale;
+			else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) inputScale = up.settings.fPerformanceScale;
+		}
 
 		xess_d3d12_init_params_t params{};
 		params.outputResolution = { a_width, a_height };

@@ -156,6 +156,13 @@ namespace F4R_Upscaling
 			float value = std::strtof(a_value, &end);
 			return (end != a_value && end && *end == '\0') ? value : a_default;
 		}
+
+		float ClampScale(float a_value, float a_min, float a_max)
+		{
+			if (a_value < a_min) return a_min;
+			if (a_value > a_max) return a_max;
+			return a_value;
+		}
 	}
 
 	struct MotionVectorConstants
@@ -237,6 +244,15 @@ namespace F4R_Upscaling
 		settings.iQualityMode = ParseInt32(buf, 0);
 		if (settings.iQualityMode < 0) settings.iQualityMode = 0;
 		if (settings.iQualityMode > 3) settings.iQualityMode = 3;
+
+		GetPrivateProfileStringA("Advanced", "fQualityScale", "0.667", buf, sizeof(buf), a_iniPath.c_str());
+		settings.fQualityScale = ClampScale(ParseFloat(buf, 0.667f), 0.60f, 0.67f);
+
+		GetPrivateProfileStringA("Advanced", "fBalancedScale", "0.588", buf, sizeof(buf), a_iniPath.c_str());
+		settings.fBalancedScale = ClampScale(ParseFloat(buf, 0.588f), 0.55f, 0.62f);
+
+		GetPrivateProfileStringA("Advanced", "fPerformanceScale", "0.50", buf, sizeof(buf), a_iniPath.c_str());
+		settings.fPerformanceScale = ClampScale(ParseFloat(buf, 0.5f), 0.50f, 0.55f);
 
 		GetPrivateProfileStringA("Advanced", "fAnisotropicMipBias", "-0.0001", buf, sizeof(buf), a_iniPath.c_str());
 		settings.fAnisotropicMipBias = ParseFloat(buf, -0.0001f);
@@ -325,7 +341,9 @@ namespace F4R_Upscaling
 		bool sharpnessChanged = false;
 		bool reflexChanged = false;
 		bool mipBiasChanged = false;
+		bool scalesChanged = false;
 		char reflexDesc[64]{};
+		char scalesDesc[96]{};
 
 		if (!isXeSS) {
 			GetPrivateProfileStringA("Settings", "fSharpness", "", buf, sizeof(buf), settingsIniPath.c_str());
@@ -348,6 +366,40 @@ namespace F4R_Upscaling
 					settings.iQualityMode = v;
 					qualityChanged = true;
 				}
+			}
+
+			GetPrivateProfileStringA("Advanced", "fQualityScale", "", buf, sizeof(buf), settingsIniPath.c_str());
+			if (buf[0] != '\0') {
+				float v = ClampScale(ParseFloat(buf, settings.fQualityScale), 0.60f, 0.67f);
+				if (v != settings.fQualityScale) {
+					settings.fQualityScale = v;
+					scalesChanged = true;
+				}
+			}
+
+			GetPrivateProfileStringA("Advanced", "fBalancedScale", "", buf, sizeof(buf), settingsIniPath.c_str());
+			if (buf[0] != '\0') {
+				float v = ClampScale(ParseFloat(buf, settings.fBalancedScale), 0.55f, 0.62f);
+				if (v != settings.fBalancedScale) {
+					settings.fBalancedScale = v;
+					scalesChanged = true;
+				}
+			}
+
+			GetPrivateProfileStringA("Advanced", "fPerformanceScale", "", buf, sizeof(buf), settingsIniPath.c_str());
+			if (buf[0] != '\0') {
+				float v = ClampScale(ParseFloat(buf, settings.fPerformanceScale), 0.50f, 0.55f);
+				if (v != settings.fPerformanceScale) {
+					settings.fPerformanceScale = v;
+					scalesChanged = true;
+				}
+			}
+
+			if (scalesChanged) {
+				snprintf(scalesDesc, sizeof(scalesDesc), " scales=%.2f/%.2f/%.2f",
+					static_cast<double>(settings.fQualityScale),
+					static_cast<double>(settings.fBalancedScale),
+					static_cast<double>(settings.fPerformanceScale));
 			}
 		}
 
@@ -410,7 +462,7 @@ namespace F4R_Upscaling
 			}
 		}
 
-		if (qualityChanged || sharpnessChanged || reflexChanged || mipBiasChanged) {
+		if (qualityChanged || sharpnessChanged || reflexChanged || mipBiasChanged || scalesChanged) {
 			const char* qname = "Native";
 			if (settings.iQualityMode == 1) qname = "Quality";
 			else if (settings.iQualityMode == 2) qname = "Balanced";
@@ -428,6 +480,9 @@ namespace F4R_Upscaling
 			}
 			if (reflexChanged) {
 				line += reflexDesc;
+			}
+			if (scalesChanged) {
+				line += scalesDesc;
 			}
 			if (mipBiasChanged) {
 				char num[16];
@@ -554,23 +609,23 @@ namespace F4R_Upscaling
 		float desiredScale = 1.0f;
 #if F4R_HAS_DLSS
 		if (mode == Method::DLSS && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
-			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
+			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
+			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
+			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
 		}
 #endif
 #if F4R_HAS_FSR3
 		if (mode == Method::FSR3 && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
-			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
+			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
+			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
+			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
 		}
 #endif
 #if F4R_HAS_XESS
 		if (mode == Method::XeSS && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = 0.65f;
-			else if (settings.iQualityMode == 2) desiredScale = 0.59f;
-			else if (settings.iQualityMode == 3) desiredScale = 0.5f;
+			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
+			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
+			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
 		}
 #endif
 		if (!upsclEnabled) {
@@ -1554,29 +1609,29 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		cachedMethod = settings.iMethod;
 		cachedQuality = settings.iQualityMode;
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::DLSS) && !g_enbLoaded) {
-			float s = 0.65f;
+			float s = settings.fQualityScale;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
+			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
+			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("DLSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
 #if F4R_HAS_FSR3
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::FSR3)) {
-			float s = 0.65f;
+			float s = settings.fQualityScale;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
+			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
+			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("FSR3 {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
 #endif
 #if F4R_HAS_XESS
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::XeSS)) {
-			float s = 0.65f;
+			float s = settings.fQualityScale;
 			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = 0.59f; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = 0.5f; qname = "Performance"; }
+			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
+			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
 			else if (settings.iQualityMode == 1) { qname = "Quality"; }
 			REX::LogDebug("XeSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
