@@ -40,16 +40,16 @@ namespace
 			REX::LogWarning("{} FAILED", a_name);
 	}
 
-	using TemporalAA_IsActiveFunc = bool(ImageSpaceEffectTemporalAA*);
-	TemporalAA_IsActiveFunc* g_originalTemporalAA_IsActive = nullptr;
+	using TAA_OffWhileUpscFunc = bool(ImageSpaceEffectTemporalAA*);
+	TAA_OffWhileUpscFunc* g_originalTAA_OffWhileUpsc = nullptr;
 
-	bool Hook_TemporalAA_IsActive(ImageSpaceEffectTemporalAA* a_this)
+	bool Hook_TAA_OffWhileUpsc(ImageSpaceEffectTemporalAA* a_this)
 	{
 		auto& up = Upscaling::GetSingleton();
 		if (up.upsclEnabled) {
 			return false;
 		}
-		return g_originalTemporalAA_IsActive(a_this);
+		return g_originalTAA_OffWhileUpsc(a_this);
 	}
 
 	using PreRender_UpdateUpscStateFunc = void(RenderTargetManager*, void*, void*, void*, void*);
@@ -61,19 +61,20 @@ namespace
 		Upscaling::GetSingleton().Update();
 	}
 
-	using PostRender_UpscAndPreparePostFXFunc = void(RenderTargetManager*, bool);
-	PostRender_UpscAndPreparePostFXFunc* g_originalPostRender_UpscAndPreparePostFX = nullptr;
+	using PostRender_UpscThenRestoreFullResFunc = void(RenderTargetManager*, bool);
+	PostRender_UpscThenRestoreFullResFunc* g_originalPostRender_UpscThenRestoreFullRes = nullptr;
 
-	void Hook_PostRender_UpscAndPreparePostFX(RenderTargetManager* a_this, bool a_p2)
+	void Hook_PostRender_UpscThenRestoreFullRes(RenderTargetManager* a_this, bool a_p2)
 	{
-		g_originalPostRender_UpscAndPreparePostFX(a_this, a_p2);
+		g_originalPostRender_UpscThenRestoreFullRes(a_this, a_p2);
 
 		auto& up = Upscaling::GetSingleton();
 		up.Apply();
 
+		static const RE::BSFixedString containerMenu("ContainerMenu");
 		bool containerOpen = false;
 		if (auto* ui = RE::UI::GetSingleton()) {
-			containerOpen = ui->IsMenuOpen(RE::BSFixedString("ContainerMenu")).value_or(false);
+			containerOpen = ui->IsMenuOpen(containerMenu).value_or(false);
 		}
 		if (up.upsclEnabled && up.currentScale < 0.999f && !containerOpen) {
 			up.BuildFlareDepth(*a_this);
@@ -194,25 +195,23 @@ namespace
 			(up.savedWidthRatio != 1.0f || up.savedHeightRatio != 1.0f);
 	}
 
-	
-
 	using LensFlare_ForceFullResDepthFunc = void(RE::NiCamera*);
 	LensFlare_ForceFullResDepthFunc* g_originalLensFlare_ForceFullResDepth = nullptr;
 
-void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
-{
-	auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
-	auto& up = Upscaling::GetSingleton();
-	up.PopFlareDepth();
-	const bool dynLow = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
-	const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f &&
-		up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
-	if (need) {
-		up.PushFlareDepth();
+	void Hook_LensFlare_ForceFullResDepth(RE::NiCamera* a_camera)
+	{
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto& up = Upscaling::GetSingleton();
+		up.PopFlareDepth();
+		const bool dynLow = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
+		const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f &&
+			up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
+		if (need) {
+			up.PushFlareDepth();
+		}
+		g_originalLensFlare_ForceFullResDepth(a_camera);
+		up.PopFlareDepth();
 	}
-	g_originalLensFlare_ForceFullResDepth(a_camera);
-	up.PopFlareDepth();
-}
 
 	using VatsTarget_SetPixelConstantFunc = void(void*, std::uint32_t, float, float);
 	VatsTarget_SetPixelConstantFunc* g_originalVatsTarget_SetPixelConstant = nullptr;
@@ -280,9 +279,9 @@ namespace F4R_Upscaling
 {
 	void Upscaling::InvokeHBAODynRes(bool a_dynamic)
 	{
-		if (g_originalPostRender_UpscAndPreparePostFX) {
+		if (g_originalPostRender_UpscThenRestoreFullRes) {
 			auto& rtMgr = RenderTargetManager::GetSingleton();
-			g_originalPostRender_UpscAndPreparePostFX(&rtMgr, a_dynamic);
+			g_originalPostRender_UpscThenRestoreFullRes(&rtMgr, a_dynamic);
 		}
 	}
 
@@ -297,9 +296,9 @@ namespace F4R_Upscaling
 			} else {
 				vtableAddr = REL::Relocation<std::uintptr_t>{ RE::VTABLE::ImageSpaceEffectTemporalAA[0] }.GetAddress();
 			}
-			auto result = Detours::X64::DetourVTable(vtableAddr, reinterpret_cast<std::uintptr_t>(&Hook_TemporalAA_IsActive), 8);
-			g_originalTemporalAA_IsActive = reinterpret_cast<TemporalAA_IsActiveFunc*>(result);
-			LogHookResult("TemporalAA_IsActive", result);
+			auto result = Detours::X64::DetourVTable(vtableAddr, reinterpret_cast<std::uintptr_t>(&Hook_TAA_OffWhileUpsc), 8);
+			g_originalTAA_OffWhileUpsc = reinterpret_cast<TAA_OffWhileUpscFunc*>(result);
+			LogHookResult("TAA_OffWhileUpsc", result);
 		}
 
 		{
@@ -311,9 +310,9 @@ namespace F4R_Upscaling
 
 		{
 			auto addr = ResolveAddr(0x2857110 + 0xe1, 0x235FF2, 0xC5);
-			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_PostRender_UpscAndPreparePostFX));
-			g_originalPostRender_UpscAndPreparePostFX = reinterpret_cast<PostRender_UpscAndPreparePostFXFunc*>(result);
-			LogHookResult("PostRender_UpscAndPreparePostFX", result);
+			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_PostRender_UpscThenRestoreFullRes));
+			g_originalPostRender_UpscThenRestoreFullRes = reinterpret_cast<PostRender_UpscThenRestoreFullResFunc*>(result);
+			LogHookResult("PostRender_UpscThenRestoreFullRes", result);
 		}
 
 		{
@@ -345,8 +344,6 @@ namespace F4R_Upscaling
 			g_originalEffects_PreserveJitter = reinterpret_cast<Effects_PreserveJitterFunc*>(result);
 			LogHookResult("Effects_PreserveJitter", result);
 		}
-
-		
 
 		{
 			auto addr = ResolveAddr(0x1297BE0 + 0x2bd, 0x225209, 0x275);

@@ -1,4 +1,5 @@
 #include "PCH.hpp"
+#include "Config.hpp"
 #include "Upscaling.hpp"
 #include "Streamline.hpp"
 #include "XeSS.hpp"
@@ -9,7 +10,6 @@
 #include "Shaders/DepthUpscale.hpp"
 
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
 
 namespace F4R_Upscaling
@@ -143,18 +143,11 @@ namespace F4R_Upscaling
 			return buffer;
 		}
 
-		int32_t ParseInt32(const char* a_value, int32_t a_default)
+		int32_t ClampInt(int32_t a_value, int32_t a_min, int32_t a_max)
 		{
-			char* end = nullptr;
-			unsigned long value = std::strtoul(a_value, &end, 10);
-			return (end != a_value && end && *end == '\0') ? static_cast<int32_t>(value) : a_default;
-		}
-
-		float ParseFloat(const char* a_value, float a_default)
-		{
-			char* end = nullptr;
-			float value = std::strtof(a_value, &end);
-			return (end != a_value && end && *end == '\0') ? value : a_default;
+			if (a_value < a_min) return a_min;
+			if (a_value > a_max) return a_max;
+			return a_value;
 		}
 
 		float ClampScale(float a_value, float a_min, float a_max)
@@ -162,6 +155,27 @@ namespace F4R_Upscaling
 			if (a_value < a_min) return a_min;
 			if (a_value > a_max) return a_max;
 			return a_value;
+		}
+
+		const char* MethodName(int32_t a_method)
+		{
+			switch (static_cast<Method>(a_method)) {
+			case Method::FSR3: return "FSR3";
+			case Method::DLSS: return "DLSS";
+			case Method::XeSS: return "XeSS";
+			case Method::Off:  return "Off";
+			}
+			return "Off";
+		}
+
+		const char* QualityName(int32_t a_qualityMode)
+		{
+			switch (a_qualityMode) {
+			case 1: return "Quality";
+			case 2: return "Balanced";
+			case 3: return "Performance";
+			}
+			return "Native";
 		}
 	}
 
@@ -219,14 +233,45 @@ namespace F4R_Upscaling
 			hbaoDepthShader->Release();
 			hbaoDepthShader = nullptr;
 		}
+		if (mvFixShader) {
+			mvFixShader->Release();
+			mvFixShader = nullptr;
+		}
+		if (mvFixCB) {
+			mvFixCB->Release();
+			mvFixCB = nullptr;
+		}
+		if (rcasShader) {
+			rcasShader->Release();
+			rcasShader = nullptr;
+		}
+		if (rcasCB) {
+			rcasCB->Release();
+			rcasCB = nullptr;
+		}
+		if (depthCopyShader) {
+			depthCopyShader->Release();
+			depthCopyShader = nullptr;
+		}
+		if (flareDepthShader) {
+			flareDepthShader->Release();
+			flareDepthShader = nullptr;
+		}
+		if (flareDepthCB) {
+			flareDepthCB->Release();
+			flareDepthCB = nullptr;
+		}
+		if (flareDepthBackup) {
+			flareDepthBackup->Release();
+			flareDepthBackup = nullptr;
+		}
 	}
 
-	void Upscaling::LoadSettings(const std::string& a_iniPath)
+	void Upscaling::LoadSettings()
 	{
-		char buf[64];
+		auto& config = Config::GetSingleton();
 
-		GetPrivateProfileStringA("Settings", "iMethod", F4R_STRINGIFY(F4R_DEFAULT_Method), buf, sizeof(buf), a_iniPath.c_str());
-		settings.iMethod = ParseInt32(buf, F4R_DEFAULT_Method);
+		settings.iMethod = config.GetInt("Settings", "iMethod", F4R_DEFAULT_Method);
 #if F4R_HAS_DLSS && !F4R_HAS_FSR3 && !F4R_HAS_XESS
 		settings.iMethod = static_cast<int32_t>(Method::DLSS);
 #elif !F4R_HAS_DLSS && F4R_HAS_FSR3 && !F4R_HAS_XESS
@@ -235,99 +280,62 @@ namespace F4R_Upscaling
 		settings.iMethod = static_cast<int32_t>(Method::XeSS);
 #endif
 
-		GetPrivateProfileStringA("Settings", "fSharpness", "0.5", buf, sizeof(buf), a_iniPath.c_str());
-		settings.fSharpness = ParseFloat(buf, 0.5f);
-		if (settings.fSharpness < 0.0f) settings.fSharpness = 0.0f;
-		if (settings.fSharpness > 1.0f) settings.fSharpness = 1.0f;
+		settings.fSharpness = ClampScale(config.GetFloat("Settings", "fSharpness", settings.fSharpness), 0.0f, 1.0f);
+		settings.iQualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
 
-		GetPrivateProfileStringA("Settings", "iQualityMode", "0", buf, sizeof(buf), a_iniPath.c_str());
-		settings.iQualityMode = ParseInt32(buf, 0);
-		if (settings.iQualityMode < 0) settings.iQualityMode = 0;
-		if (settings.iQualityMode > 3) settings.iQualityMode = 3;
+		settings.fQualityScale = ClampScale(config.GetFloat("Settings", "fQualityScale", settings.fQualityScale), 0.60f, 0.67f);
+		settings.fBalancedScale = ClampScale(config.GetFloat("Settings", "fBalancedScale", settings.fBalancedScale), 0.55f, 0.62f);
+		settings.fPerformanceScale = ClampScale(config.GetFloat("Settings", "fPerformanceScale", settings.fPerformanceScale), 0.50f, 0.55f);
 
-		GetPrivateProfileStringA("Advanced", "fQualityScale", "0.667", buf, sizeof(buf), a_iniPath.c_str());
-		settings.fQualityScale = ClampScale(ParseFloat(buf, 0.667f), 0.60f, 0.67f);
-
-		GetPrivateProfileStringA("Advanced", "fBalancedScale", "0.588", buf, sizeof(buf), a_iniPath.c_str());
-		settings.fBalancedScale = ClampScale(ParseFloat(buf, 0.588f), 0.55f, 0.62f);
-
-		GetPrivateProfileStringA("Advanced", "fPerformanceScale", "0.50", buf, sizeof(buf), a_iniPath.c_str());
-		settings.fPerformanceScale = ClampScale(ParseFloat(buf, 0.5f), 0.50f, 0.55f);
-
-		GetPrivateProfileStringA("Advanced", "fAnisotropicMipBias", "-0.0001", buf, sizeof(buf), a_iniPath.c_str());
-		settings.fAnisotropicMipBias = ParseFloat(buf, -0.0001f);
-		if (settings.fAnisotropicMipBias < -2.0f) settings.fAnisotropicMipBias = -2.0f;
-		if (settings.fAnisotropicMipBias > 0.0f) settings.fAnisotropicMipBias = 0.0f;
+		settings.fAnisotropicMipBias = ClampScale(config.GetFloat("Settings", "fAnisotropicMipBias", settings.fAnisotropicMipBias), -2.0f, 0.0f);
 
 #if F4R_HAS_DLSS
-    GetPrivateProfileStringA("Settings", "bEnableReflex", "0", buf, sizeof(buf), a_iniPath.c_str());
-    settings.bEnableReflex = ParseInt32(buf, 0) != 0;
-
-	    GetPrivateProfileStringA("Settings", "bReflexBoost", "0", buf, sizeof(buf), a_iniPath.c_str());
-	    settings.bReflexBoost = ParseInt32(buf, 0) != 0;
-
-	    GetPrivateProfileStringA("Advanced", "bReflexUseFPSLimit", "0", buf, sizeof(buf), a_iniPath.c_str());
-	    settings.bReflexUseFPSLimit = ParseInt32(buf, 0) != 0;
-
-	    GetPrivateProfileStringA("Advanced", "fReflexFPSLimit", "60", buf, sizeof(buf), a_iniPath.c_str());
-	    float reflexFPSLimit = ParseFloat(buf, 60.0f);
-	    if (reflexFPSLimit < 20.0f) reflexFPSLimit = 20.0f;
-	    if (reflexFPSLimit > 240.0f) reflexFPSLimit = 240.0f;
-	    settings.fReflexFPSLimit = reflexFPSLimit;
+		settings.bEnableReflex = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
+		settings.bReflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
+		settings.bReflexUseFPSLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
+		settings.fReflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
 #endif
 
-	const auto mode = static_cast<Method>(settings.iMethod);
-	if (mode == Method::DLSS) {
-		const char* qname = "Native";
-		if (settings.iQualityMode == 1) qname = "Quality";
-		else if (settings.iQualityMode == 2) qname = "Balanced";
-		else if (settings.iQualityMode == 3) qname = "Performance";
-#if F4R_HAS_DLSS
-		REX::LogInformation("Settings loaded: method=DLSS quality={} sharpness={} mipBias={} reflex={}",
-			qname, settings.fSharpness, settings.fAnisotropicMipBias,
-			settings.bEnableReflex ? "enabled" : "disabled");
-#else
-		REX::LogInformation("Settings loaded: method=DLSS quality={} sharpness={} mipBias={}",
-			qname, settings.fSharpness, settings.fAnisotropicMipBias);
-#endif
-	} else if (mode == Method::FSR3) {
-			const char* qname = "Native";
-			if (settings.iQualityMode == 1) qname = "Quality";
-			else if (settings.iQualityMode == 2) qname = "Balanced";
-			else if (settings.iQualityMode == 3) qname = "Performance";
-			REX::LogInformation("Settings loaded: method=FSR3 quality={} sharpness={} mipBias={}",
-				qname, settings.fSharpness, settings.fAnisotropicMipBias);
-		} else if (mode == Method::XeSS) {
-			const char* qname = "Native";
-			if (settings.iQualityMode == 1) qname = "Quality";
-			else if (settings.iQualityMode == 2) qname = "Balanced";
-			else if (settings.iQualityMode == 3) qname = "Performance";
-			REX::LogInformation("Settings loaded: method=XeSS quality={} sharpness={} mipBias={}",
-				qname, settings.fSharpness, settings.fAnisotropicMipBias);
-		} else {
+		const char* methodName = MethodName(settings.iMethod);
+		const char* qname = QualityName(settings.iQualityMode);
+
+		if (settings.iMethod == static_cast<int32_t>(Method::Off)) {
 			REX::LogInformation("Settings loaded: method=Off");
+		} else {
+#if F4R_HAS_DLSS
+			REX::LogInformation("Settings loaded: method={} quality={} sharpness={} mipBias={} reflex={}",
+				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias,
+				settings.bEnableReflex ? "enabled" : "disabled");
+#else
+			REX::LogInformation("Settings loaded: method={} quality={} sharpness={} mipBias={}",
+				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias);
+#endif
 		}
 
-		settingsIniPath = a_iniPath;
+		{
+			const std::uint64_t writeTime = GetFileWriteTime(config.Path());
+			if (writeTime != 0) {
+				methodIniHasTime = true;
+				methodIniWriteTime = writeTime;
+			}
+		}
+
 		PollRuntimeSettings();
 	}
 
 	void Upscaling::PollSettingsChanged()
 	{
-		if (settingsIniPath.empty()) return;
+		if (!Config::GetSingleton().IsLoaded()) return;
 		pendingSettingsRefresh = true;
 	}
 
 	void Upscaling::PollRuntimeSettings()
 	{
-		if (settingsIniPath.empty()) return;
-		const bool isXeSS = (settings.iMethod == static_cast<int32_t>(Method::XeSS));
+		auto& config = Config::GetSingleton();
+		if (!config.IsLoaded()) return;
 
-		WIN32_FILE_ATTRIBUTE_DATA attrs{};
-		if (!GetFileAttributesExA(settingsIniPath.c_str(), GetFileExInfoStandard, &attrs)) return;
-		const std::uint64_t writeTime =
-			(static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwHighDateTime) << 32) |
-			static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwLowDateTime);
+		const std::uint64_t writeTime = GetFileWriteTime(config.Path());
+		if (writeTime == 0) return;
 		if (!settingsIniHasTime) {
 			settingsIniHasTime = true;
 			settingsIniWriteTime = writeTime;
@@ -336,7 +344,8 @@ namespace F4R_Upscaling
 		if (writeTime == settingsIniWriteTime) return;
 		settingsIniWriteTime = writeTime;
 
-		char buf[64];
+		if (!config.Reload()) return;
+
 		bool qualityChanged = false;
 		bool sharpnessChanged = false;
 		bool reflexChanged = false;
@@ -345,132 +354,79 @@ namespace F4R_Upscaling
 		char reflexDesc[64]{};
 		char scalesDesc[96]{};
 
-		if (!isXeSS) {
-			GetPrivateProfileStringA("Settings", "fSharpness", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				float v = ParseFloat(buf, settings.fSharpness);
-				if (v < 0.0f) v = 0.0f;
-				if (v > 1.0f) v = 1.0f;
-				if (v != settings.fSharpness) {
-					settings.fSharpness = v;
-					sharpnessChanged = true;
-				}
-			}
+		const float sharpness = ClampScale(config.GetFloat("Settings", "fSharpness", settings.fSharpness), 0.0f, 1.0f);
+		if (sharpness != settings.fSharpness) {
+			settings.fSharpness = sharpness;
+			sharpnessChanged = true;
+		}
 
-			GetPrivateProfileStringA("Settings", "iQualityMode", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				int32_t v = ParseInt32(buf, settings.iQualityMode);
-				if (v < 0) v = 0;
-				if (v > 3) v = 3;
-				if (v != settings.iQualityMode) {
-					settings.iQualityMode = v;
-					qualityChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Advanced", "fQualityScale", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				float v = ClampScale(ParseFloat(buf, settings.fQualityScale), 0.60f, 0.67f);
-				if (v != settings.fQualityScale) {
-					settings.fQualityScale = v;
-					scalesChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Advanced", "fBalancedScale", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				float v = ClampScale(ParseFloat(buf, settings.fBalancedScale), 0.55f, 0.62f);
-				if (v != settings.fBalancedScale) {
-					settings.fBalancedScale = v;
-					scalesChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Advanced", "fPerformanceScale", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				float v = ClampScale(ParseFloat(buf, settings.fPerformanceScale), 0.50f, 0.55f);
-				if (v != settings.fPerformanceScale) {
-					settings.fPerformanceScale = v;
-					scalesChanged = true;
-				}
-			}
-
-			if (scalesChanged) {
-				snprintf(scalesDesc, sizeof(scalesDesc), " scales=%.2f/%.2f/%.2f",
-					static_cast<double>(settings.fQualityScale),
-					static_cast<double>(settings.fBalancedScale),
-					static_cast<double>(settings.fPerformanceScale));
+		if (settings.iMethod != static_cast<int32_t>(Method::XeSS)) {
+			const int32_t qualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
+			if (qualityMode != settings.iQualityMode) {
+				settings.iQualityMode = qualityMode;
+				qualityChanged = true;
 			}
 		}
 
-		if (settings.iMethod == static_cast<int32_t>(Method::DLSS)) {
-			GetPrivateProfileStringA("Settings", "bEnableReflex", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				const bool v = ParseInt32(buf, settings.bEnableReflex ? 1 : 0) != 0;
-				if (v != settings.bEnableReflex) {
-					settings.bEnableReflex = v;
-					reflexChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Settings", "bReflexBoost", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				const bool v = ParseInt32(buf, settings.bReflexBoost ? 1 : 0) != 0;
-				if (v != settings.bReflexBoost) {
-					settings.bReflexBoost = v;
-					reflexChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Advanced", "bReflexUseFPSLimit", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				const bool v = ParseInt32(buf, settings.bReflexUseFPSLimit ? 1 : 0) != 0;
-				if (v != settings.bReflexUseFPSLimit) {
-					settings.bReflexUseFPSLimit = v;
-					reflexChanged = true;
-				}
-			}
-
-			GetPrivateProfileStringA("Advanced", "fReflexFPSLimit", "", buf, sizeof(buf), settingsIniPath.c_str());
-			if (buf[0] != '\0') {
-				float v = ParseFloat(buf, settings.fReflexFPSLimit);
-				if (v < 20.0f) v = 20.0f;
-				if (v > 240.0f) v = 240.0f;
-				if (v != settings.fReflexFPSLimit) {
-					settings.fReflexFPSLimit = v;
-					reflexChanged = true;
-				}
-			}
-
-			if (reflexChanged) {
-				snprintf(reflexDesc, sizeof(reflexDesc), " reflex=%s%s%s",
-					settings.bEnableReflex ? "enabled" : "disabled",
-					settings.bReflexBoost ? "+boost" : "",
-					settings.bReflexUseFPSLimit ? " limit" : "");
-			}
+		const float qualityScale = ClampScale(config.GetFloat("Settings", "fQualityScale", settings.fQualityScale), 0.60f, 0.67f);
+		if (qualityScale != settings.fQualityScale) {
+			settings.fQualityScale = qualityScale;
+			scalesChanged = true;
 		}
 
-		GetPrivateProfileStringA("Advanced", "fAnisotropicMipBias", "", buf, sizeof(buf), settingsIniPath.c_str());
-		if (buf[0] != '\0') {
-			float v = ParseFloat(buf, settings.fAnisotropicMipBias);
-			if (v < -2.0f) v = -2.0f;
-			if (v > 0.0f) v = 0.0f;
-			if (v != settings.fAnisotropicMipBias) {
-				settings.fAnisotropicMipBias = v;
-				mipBiasChanged = true;
-				samplerCacheValid = false;
-			}
+		const float balancedScale = ClampScale(config.GetFloat("Settings", "fBalancedScale", settings.fBalancedScale), 0.55f, 0.62f);
+		if (balancedScale != settings.fBalancedScale) {
+			settings.fBalancedScale = balancedScale;
+			scalesChanged = true;
+		}
+
+		const float performanceScale = ClampScale(config.GetFloat("Settings", "fPerformanceScale", settings.fPerformanceScale), 0.50f, 0.55f);
+		if (performanceScale != settings.fPerformanceScale) {
+			settings.fPerformanceScale = performanceScale;
+			scalesChanged = true;
+		}
+
+		if (scalesChanged) {
+			snprintf(scalesDesc, sizeof(scalesDesc), " scales=%.2f/%.2f/%.2f",
+				static_cast<double>(settings.fQualityScale),
+				static_cast<double>(settings.fBalancedScale),
+				static_cast<double>(settings.fPerformanceScale));
+		}
+
+		const bool reflexEnabled = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
+		const bool reflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
+		const bool reflexUseLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
+		const float reflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
+
+		reflexChanged = (reflexEnabled != settings.bEnableReflex) ||
+			(reflexBoost != settings.bReflexBoost) ||
+			(reflexUseLimit != settings.bReflexUseFPSLimit) ||
+			(reflexFPSLimit != settings.fReflexFPSLimit);
+
+		settings.bEnableReflex = reflexEnabled;
+		settings.bReflexBoost = reflexBoost;
+		settings.bReflexUseFPSLimit = reflexUseLimit;
+		settings.fReflexFPSLimit = reflexFPSLimit;
+
+		if (reflexChanged) {
+			snprintf(reflexDesc, sizeof(reflexDesc), " reflex=%s%s%s",
+				settings.bEnableReflex ? "enabled" : "disabled",
+				settings.bReflexBoost ? "+boost" : "",
+				settings.bReflexUseFPSLimit ? " limit" : "");
+		}
+
+		const float mipBias = ClampScale(config.GetFloat("Settings", "fAnisotropicMipBias", settings.fAnisotropicMipBias), -2.0f, 0.0f);
+		if (mipBias != settings.fAnisotropicMipBias) {
+			settings.fAnisotropicMipBias = mipBias;
+			mipBiasChanged = true;
+			samplerCacheValid = false;
 		}
 
 		if (qualityChanged || sharpnessChanged || reflexChanged || mipBiasChanged || scalesChanged) {
-			const char* qname = "Native";
-			if (settings.iQualityMode == 1) qname = "Quality";
-			else if (settings.iQualityMode == 2) qname = "Balanced";
-			else if (settings.iQualityMode == 3) qname = "Performance";
 			std::string line = "Settings updated:";
 			if (qualityChanged) {
 				line += " quality=";
-				line += qname;
+				line += QualityName(settings.iQualityMode);
 			}
 			if (sharpnessChanged) {
 				char num[16];
@@ -505,20 +461,14 @@ namespace F4R_Upscaling
 	}
 
 	void Upscaling::Init()
-{
-		static bool s_initialized = false;
-		if (s_initialized) {
+	{
+		if (initialized) {
 			REX::LogWarning("Init called twice: ignoring (hooks already installed)");
 			return;
 		}
-		s_initialized = true;
+		initialized = true;
 
 		REX::LogDebug("Init called");
-
-		if (settings.iMethod == static_cast<int32_t>(Method::Off)) {
-			REX::LogInformation("Off mode: no hooks installed");
-			return;
-		}
 
 		auto* branchPool = F4SE::GetTrampolineInterface()->AllocateFromBranchPool(256);
 		REL::GetTrampoline()->Init(branchPool, 256);
@@ -534,40 +484,44 @@ namespace F4R_Upscaling
 		auto* ui = RE::UI::GetSingleton();
 		if (!ui) return false;
 
-		static const std::initializer_list<const char*> blockedMenus = {
+		static const RE::BSFixedString blockedMenus[] = {
 			"PauseMenu", "PipboyMenu", "InventoryMenu",
 			"BarterMenu", "CraftingMenu", "MapMenu",
 			"ExamineMenu", "TerminalMenu", "LockpickingMenu"
 		};
-		for (auto name : blockedMenus) {
-			auto result = ui->IsMenuOpen(RE::BSFixedString(name));
-			if (result.value_or(false)) return true;
+		for (const auto& name : blockedMenus) {
+			if (ui->IsMenuOpen(name).value_or(false)) return true;
 		}
 		return false;
 	}
 
 	void Upscaling::Update()
 	{
-		const auto mode = static_cast<Method>(settings.iMethod);
+		PollMethodChange();
+
+		const auto method = static_cast<Method>(settings.iMethod);
 		upsclEnabled = false;
-		if (mode == Method::Off) {
+		if (method == Method::Off) {
+			if (wasUpsclEnabled || fxaaStateSaved || taaFlagSaved || samplerBiasActive) {
+				ReturnToVanilla();
+			}
 			currentScale = 1.0f;
 			return;
 		}
 
 #if F4R_HAS_DLSS
-		if (mode == Method::DLSS) {
+		if (method == Method::DLSS) {
 			auto& streamline = Streamline::GetSingleton();
 			upsclEnabled = streamline.initialized && streamline.featureDLSS;
 		}
 #endif
 #if F4R_HAS_FSR3
-		if (mode == Method::FSR3) {
+		if (method == Method::FSR3) {
 			upsclEnabled = true;
 		}
 #endif
 #if F4R_HAS_XESS
-		if (mode == Method::XeSS) {
+		if (method == Method::XeSS) {
 			upsclEnabled = !XeSS::GetSingleton().disabled;
 		}
 #endif
@@ -582,15 +536,12 @@ namespace F4R_Upscaling
 			resetHistory = true;
 		}
 		wasUpsclEnabled = upsclEnabled;
-		static float s_prevScale = 1.0f;
 
-#if F4R_HAS_DLSS
-		if (mode == Method::DLSS) {
-			Streamline::GetSingleton().UpdateLatency();
-		}
+#if F4R_HAS_STREAMLINE
+		Streamline::GetSingleton().UpdateLatency();
 #endif
 
-		if ((mode == Method::FSR3 || mode == Method::XeSS) && g_enbLoaded && !g_realDevice && !g_enbExtractionFailed) {
+		if ((method == Method::FSR3 || method == Method::XeSS) && g_enbLoaded && !g_realDevice && !g_enbExtractionFailed) {
 			ExtractRealD3D11();
 		}
 
@@ -607,29 +558,10 @@ namespace F4R_Upscaling
 		}
 
 		float desiredScale = 1.0f;
-#if F4R_HAS_DLSS
-		if (mode == Method::DLSS && upsclEnabled && !g_enbLoaded) {
+		if (upsclEnabled && !g_enbLoaded) {
 			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
 			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
 			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
-		}
-#endif
-#if F4R_HAS_FSR3
-		if (mode == Method::FSR3 && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
-			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
-			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
-		}
-#endif
-#if F4R_HAS_XESS
-		if (mode == Method::XeSS && upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) desiredScale = settings.fQualityScale;
-			else if (settings.iQualityMode == 2) desiredScale = settings.fBalancedScale;
-			else if (settings.iQualityMode == 3) desiredScale = settings.fPerformanceScale;
-		}
-#endif
-		if (!upsclEnabled) {
-			desiredScale = 1.0f;
 		}
 		currentScale = desiredScale;
 
@@ -639,14 +571,14 @@ namespace F4R_Upscaling
 			if (renderWidth < 1) renderWidth = 1;
 			if (upsclEnabled) {
 #if F4R_HAS_FSR3
-				if (mode == Method::FSR3) {
+				if (method == Method::FSR3) {
 					int32_t phaseCount = ffxFsr3GetJitterPhaseCount(renderWidth, displayWidth);
 					ffxFsr3GetJitterOffset(&jitterX, &jitterY, state.frameCount, phaseCount);
 				} else
 #endif
 				{
 #if F4R_HAS_XESS
-					float basePhaseCount = (mode == Method::XeSS) ? 16.0f : 8.0f;
+					float basePhaseCount = (method == Method::XeSS) ? 16.0f : 8.0f;
 #else
 					float basePhaseCount = 8.0f;
 #endif
@@ -688,9 +620,9 @@ namespace F4R_Upscaling
 			GetDynResActivated(rtMgr) = (desiredScale < 0.999f);
 		}
 
-		if (s_prevScale != desiredScale) {
+		if (prevScale != desiredScale) {
 			resetHistory = true;
-			s_prevScale = desiredScale;
+			prevScale = desiredScale;
 		}
 
 		UpdateGameSettings();
@@ -700,8 +632,8 @@ namespace F4R_Upscaling
 
 	void Upscaling::Apply()
 	{
-		const auto mode = static_cast<Method>(settings.iMethod);
-		if (mode == Method::Off) return;
+		const auto method = static_cast<Method>(settings.iMethod);
+		if (method == Method::Off) return;
 
 		auto* main = RE::Main::GetSingleton();
 
@@ -731,7 +663,7 @@ namespace F4R_Upscaling
 		if (!backBufferResource) return;
 
 #if F4R_HAS_XESS
-		if (mode == Method::XeSS) {
+		if (method == Method::XeSS) {
 			if (!xessColorTexture || !xessColorTexture->resource) {
 				backBufferResource->Release();
 				return;
@@ -753,7 +685,7 @@ namespace F4R_Upscaling
 		if (renderH < 1) renderH = 1;
 
 #if F4R_HAS_DLSS
-		if (mode == Method::DLSS) {
+		if (method == Method::DLSS) {
 			auto& streamline = Streamline::GetSingleton();
 
 			if (!workingTexture || !workingTexture->resource || !workingTexture->srv ||
@@ -827,7 +759,7 @@ namespace F4R_Upscaling
 		}
 #endif
 #if F4R_HAS_FSR3
-		if (mode == Method::FSR3) {
+		if (method == Method::FSR3) {
 			if (fidelityFX) {
 				fidelityFX->Apply(workingTexture->resource, jitterX, jitterY, renderW, renderH);
 			}
@@ -836,7 +768,7 @@ namespace F4R_Upscaling
 		}
 #endif
 #if F4R_HAS_XESS
-		if (mode == Method::XeSS) {
+		if (method == Method::XeSS) {
 			if (xessMotionVectorTexture && xessMotionVectorTexture->resource) {
 				ID3D11Resource* rawMV = reinterpret_cast<ID3D11Resource*>(rendererData->renderTargets[RenderTarget::kMotionVectors].texture);
 				if (rawMV) {
@@ -844,7 +776,7 @@ namespace F4R_Upscaling
 				}
 			}
 
-if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
+			if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 				ID3D11ShaderResourceView* depthSRV =
 					reinterpret_cast<ID3D11ShaderResourceView*>(rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
 
@@ -923,6 +855,10 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		if (imageSpaceManager && imageSpaceManager->effectList.size() > 0x11 &&
 			imageSpaceManager->effectList[0x11]) {
 			if (upsclEnabled) {
+				if (!fxaaStateSaved) {
+					fxaaOriginalActive = imageSpaceManager->effectList[0x11]->isActive;
+					fxaaStateSaved = true;
+				}
 				imageSpaceManager->effectList[0x11]->isActive = false;
 			}
 		}
@@ -931,8 +867,103 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			auto enableTAAReloc = IsAE() || IsNG()
 				? REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x294512 } }
 				: REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x70681 } };
-			*reinterpret_cast<bool*>(enableTAAReloc.GetAddress()) = true;
+			auto* taaFlag = reinterpret_cast<bool*>(enableTAAReloc.GetAddress());
+			if (!taaFlagSaved) {
+				taaFlagOriginal = *taaFlag;
+				taaFlagSaved = true;
+			}
+			*taaFlag = true;
 		}
+	}
+
+	void Upscaling::RestoreAASettings()
+	{
+		auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+		if (fxaaStateSaved && imageSpaceManager && imageSpaceManager->effectList.size() > 0x11 &&
+			imageSpaceManager->effectList[0x11]) {
+			imageSpaceManager->effectList[0x11]->isActive = fxaaOriginalActive;
+			fxaaStateSaved = false;
+		}
+
+		if (taaFlagSaved) {
+			auto enableTAAReloc = IsAE() || IsNG()
+				? REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x294512 } }
+				: REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x70681 } };
+			*reinterpret_cast<bool*>(enableTAAReloc.GetAddress()) = taaFlagOriginal;
+			taaFlagSaved = false;
+		}
+	}
+
+	void Upscaling::PollMethodChange()
+	{
+#if F4R_HAS_MULTI
+		auto& config = Config::GetSingleton();
+		if (!config.IsLoaded()) return;
+
+		const std::uint64_t writeTime = GetFileWriteTime(config.Path());
+		if (writeTime == 0) return;
+		if (!methodIniHasTime) {
+			methodIniHasTime = true;
+			methodIniWriteTime = writeTime;
+			return;
+		}
+		if (writeTime == methodIniWriteTime) return;
+		methodIniWriteTime = writeTime;
+
+		if (!config.Reload()) return;
+
+		const int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
+		if (requested < static_cast<int32_t>(Method::Off) || requested > static_cast<int32_t>(Method::XeSS)) {
+			return;
+		}
+
+		if (requested == settings.iMethod) {
+			lastRequestedMethod = requested;
+			return;
+		}
+		if (requested == lastRequestedMethod) {
+			return;
+		}
+		lastRequestedMethod = requested;
+
+		if (requested == static_cast<int32_t>(Method::XeSS)) {
+			REX::LogInformation("Settings updated: method=XeSS is not available at runtime, falling back to {}",
+				MethodName(settings.iMethod));
+			return;
+		}
+
+		settings.iMethod = requested;
+		if (requested == static_cast<int32_t>(Method::Off)) {
+			REX::LogInformation("Settings updated: method=Off");
+		} else {
+			REX::LogInformation("Settings updated: method={}", MethodName(requested));
+			resetHistory = true;
+		}
+#endif
+	}
+
+	void Upscaling::ReturnToVanilla()
+	{
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		GetDynWidthRatio(rtMgr) = 1.0f;
+		GetDynHeightRatio(rtMgr) = 1.0f;
+		GetDynResActivated(rtMgr) = false;
+
+		auto& state = RE::BSGraphics::State::GetSingleton();
+		state.offsetX = 0.0f;
+		state.offsetY = 0.0f;
+
+		samplerBiasActive = false;
+		samplerCacheValid = false;
+
+		InvalidateFlareDepth();
+		ReleaseHBAOCache();
+		RestoreAASettings();
+
+		currentScale = 1.0f;
+		wasUpsclEnabled = false;
+		resetHistory = true;
+		REX::LogDebug("Vanilla restored: dyn-res, jitter, sampler bias, AA reverted");
 	}
 
 	void Upscaling::RefreshSamplerCache(SamplerStates* a_states, float a_bias)
@@ -1009,6 +1040,44 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 
 		for (int i = 0; i < 320; i++) {
 			samplerStates->a[i] = originalSamplerStates[i];
+		}
+	}
+
+	void Upscaling::EnsureSharpenResources(
+		ID3D11Device* a_device,
+		uint32_t a_width,
+		uint32_t a_height,
+		DXGI_FORMAT a_backBufferFormat,
+		DXGI_FORMAT a_srvFormat)
+	{
+		if (!a_device || settings.fSharpness <= 0.0f) return;
+		if (settings.iMethod != static_cast<int32_t>(Method::DLSS) &&
+			settings.iMethod != static_cast<int32_t>(Method::XeSS)) {
+			return;
+		}
+		if (!rcasCB) {
+			rcasCB = CreateConstantBuffer(a_device, "rcasCB", sizeof(RCASConstants));
+		}
+		if (!rcasShader) {
+			rcasShader = CreateComputeShaderFromBytecode(kRCAS, kRCASSize, a_device);
+		}
+		if (!tempTexture) {
+			tempTexture = CreateSharpenTexture(a_device, a_width, a_height, a_backBufferFormat, a_srvFormat);
+		}
+	}
+
+	void Upscaling::EnsureMotionVectorFixResources(ID3D11Device* a_device)
+	{
+		if (!a_device) return;
+		if (settings.iMethod != static_cast<int32_t>(Method::DLSS) &&
+			settings.iMethod != static_cast<int32_t>(Method::XeSS)) {
+			return;
+		}
+		if (!mvFixCB) {
+			mvFixCB = CreateConstantBuffer(a_device, "mvFixCB", sizeof(MotionVectorConstants));
+		}
+		if (!mvFixShader) {
+			mvFixShader = CreateComputeShaderFromBytecode(kMVFix, kMVFixSize, a_device);
 		}
 	}
 
@@ -1225,35 +1294,11 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 				} else if (flareValid) {
 					flareValid = false;
 				}
-#if F4R_HAS_DLSS
-				if (settings.iMethod == static_cast<int32_t>(Method::DLSS) && settings.fSharpness > 0.0f) {
-					if (!rcasCB) {
-						rcasCB = CreateConstantBuffer(device, "rcasCB", sizeof(RCASConstants));
-					}
-					if (!rcasShader) {
-						rcasShader = CreateComputeShaderFromBytecode(kRCAS, kRCASSize, device);
-					}
-					if (!tempTexture) {
-						tempTexture = CreateSharpenTexture(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
-					}
-				}
-#endif
-#if F4R_HAS_XESS
-				if (settings.iMethod == static_cast<int32_t>(Method::XeSS) && settings.fSharpness > 0.0f) {
-					if (!tempTexture) {
-						tempTexture = CreateSharpenTexture(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
-					}
-					if (!rcasCB) {
-						rcasCB = CreateConstantBuffer(device, "rcasCB", sizeof(RCASConstants));
-					}
-					if (!rcasShader) {
-						rcasShader = CreateComputeShaderFromBytecode(kRCAS, kRCASSize, device);
-					}
-				}
-#endif
+				EnsureSharpenResources(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
+				EnsureMotionVectorFixResources(device);
 				return;
 			}
-			REX::LogDebug("CheckResources: mode/resolution/format/quality changed {}x{} fmt{} mode{} q{} -> {}x{} fmt{} mode{} q{}: recreating",
+			REX::LogDebug("CheckResources: method/resolution/format/quality changed {}x{} fmt{} method{} q{} -> {}x{} fmt{} method{} q{}: recreating",
 				cachedWidth, cachedHeight, static_cast<int>(cachedFormat), cachedMethod, cachedQuality,
 				state.screenWidth, state.screenHeight, static_cast<int>(backBufferFormat), settings.iMethod, settings.iQualityMode);
 			motionVectorTexture.reset();
@@ -1293,12 +1338,12 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			resourcesCreated = false;
 		}
 
-		const auto mode = static_cast<Method>(settings.iMethod);
+		const auto method = static_cast<Method>(settings.iMethod);
 
 		REX::LogDebug("CheckResources: creating resources (method={})", settings.iMethod);
 
 #if F4R_HAS_FSR3
-		if (mode == Method::FSR3 && !workingTexture) {
+		if (method == Method::FSR3 && !workingTexture) {
 			workingTexture = std::make_unique<Texture2D>();
 			D3D11_TEXTURE2D_DESC texDesc = {};
 			texDesc.Width = state.screenWidth;
@@ -1320,7 +1365,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 #endif
 
 #if F4R_HAS_DLSS
-		if (mode == Method::DLSS && !workingTexture) {
+		if (method == Method::DLSS && !workingTexture) {
 			workingTexture = std::make_unique<Texture2D>();
 			D3D11_TEXTURE2D_DESC texDesc = {};
 			texDesc.Width = state.screenWidth;
@@ -1350,7 +1395,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 			}
 		}
 
-		if (mode == Method::DLSS && !dlssOutputTexture) {
+		if (method == Method::DLSS && !dlssOutputTexture) {
 			dlssOutputTexture = std::make_unique<Texture2D>();
 			D3D11_TEXTURE2D_DESC texDesc = {};
 			texDesc.Width = state.screenWidth;
@@ -1382,10 +1427,8 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		}
 #endif
 
-
-
 #if F4R_HAS_DLSS
-		if (mode == Method::DLSS) {
+		if (method == Method::DLSS) {
 			if (!motionVectorTexture) {
 				motionVectorTexture = std::make_unique<Texture2D>();
 				D3D11_TEXTURE2D_DESC texDesc = {};
@@ -1429,29 +1472,12 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 				REX::LogDebug("motionVectorTexture {}x{} R16G16_FLOAT", texDesc.Width, texDesc.Height);
 			}
 
-			if (!mvFixCB) {
-				mvFixCB = CreateConstantBuffer(device, "mvFixCB", sizeof(MotionVectorConstants));
-			}
-
-			if (!mvFixShader) {
-				mvFixShader = CreateComputeShaderFromBytecode(kMVFix, kMVFixSize, device);
-			}
-
-			if (settings.fSharpness > 0.0f) {
-				if (!rcasCB) {
-					rcasCB = CreateConstantBuffer(device, "rcasCB", sizeof(RCASConstants));
-				}
-				if (!rcasShader) {
-					rcasShader = CreateComputeShaderFromBytecode(kRCAS, kRCASSize, device);
-				}
-				if (!tempTexture) {
-					tempTexture = CreateSharpenTexture(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
-				}
-			}
+			EnsureMotionVectorFixResources(device);
+			EnsureSharpenResources(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
 		}
 #endif
 #if F4R_HAS_FSR3
-		if (mode == Method::FSR3) {
+		if (method == Method::FSR3) {
 			fidelityFX = std::make_unique<FidelityFX>();
 			if (!fidelityFX->CreateFSRResources(
 					device,
@@ -1466,7 +1492,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		}
 #endif
 #if F4R_HAS_XESS
-		if (mode == Method::XeSS) {
+		if (method == Method::XeSS) {
 			auto* context = GetImmediateContext();
 			auto& xess = XeSS::GetSingleton();
 			auto& rtMgrFb = RE::BSGraphics::RenderTargetManager::GetSingleton();
@@ -1555,29 +1581,13 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 				}
 			}
 
-			if (settings.fSharpness > 0.0f) {
-				if (!tempTexture) {
-					tempTexture = CreateSharpenTexture(device, width, height, backBufferFormat, typedFormat);
-				}
-				if (!rcasCB) {
-					rcasCB = CreateConstantBuffer(device, "rcasCB", sizeof(RCASConstants));
-				}
-				if (!rcasShader) {
-					rcasShader = CreateComputeShaderFromBytecode(kRCAS, kRCASSize, device);
-				}
-			}
+			EnsureSharpenResources(device, width, height, backBufferFormat, typedFormat);
 
 			if (!depthCopyShader) {
 				depthCopyShader = CreateComputeShaderFromBytecode(kDepthCopy, kDepthCopySize, device);
 			}
 
-			if (!mvFixCB) {
-				mvFixCB = CreateConstantBuffer(device, "mvFixCB", sizeof(MotionVectorConstants));
-			}
-
-			if (!mvFixShader) {
-				mvFixShader = CreateComputeShaderFromBytecode(kMVFix, kMVFixSize, device);
-			}
+			EnsureMotionVectorFixResources(device);
 
 			int xessQualityMode = settings.iQualityMode;
 			if (g_enbLoaded && xessQualityMode >= 1 && xessQualityMode <= 3) {
@@ -1608,34 +1618,18 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		cachedFormat = backBufferFormat;
 		cachedMethod = settings.iMethod;
 		cachedQuality = settings.iQualityMode;
-		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::DLSS) && !g_enbLoaded) {
+
+		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 &&
+			!(method == Method::DLSS && g_enbLoaded)) {
 			float s = settings.fQualityScale;
-			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
-			else if (settings.iQualityMode == 1) { qname = "Quality"; }
-			REX::LogDebug("DLSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
+			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; }
+			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; }
+
+			REX::LogDebug("{} {}: scale={:.3f} {}x{} -> {}x{}",
+				MethodName(settings.iMethod), QualityName(settings.iQualityMode), static_cast<double>(s),
+				state.screenWidth, state.screenHeight,
+				uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
-#if F4R_HAS_FSR3
-		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::FSR3)) {
-			float s = settings.fQualityScale;
-			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
-			else if (settings.iQualityMode == 1) { qname = "Quality"; }
-			REX::LogDebug("FSR3 {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
-		}
-#endif
-#if F4R_HAS_XESS
-		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 && settings.iMethod == static_cast<int32_t>(Method::XeSS)) {
-			float s = settings.fQualityScale;
-			const char* qname = "Quality";
-			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; qname = "Balanced"; }
-			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; qname = "Performance"; }
-			else if (settings.iQualityMode == 1) { qname = "Quality"; }
-			REX::LogDebug("XeSS {}: scale={:.3f} {}x{} -> {}x{}", qname, s, state.screenWidth, state.screenHeight, uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
-		}
-#endif
 	}
 
 	namespace
@@ -1843,7 +1837,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		return true;
 	}
 
-	void Upscaling::ExitHBAO()
+	void Upscaling::RestoreHBAOState()
 	{
 		if (!hbaoActive) {
 			return;
@@ -1852,22 +1846,6 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
 		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		auto* ctx = GetImmediateContext();
-		if (rendererData && ctx) {
-			std::uint32_t idx = RenderTarget::kSSAOFinal;
-			if (idx < kScaledTargetSpan && hbaoMapped[idx] && hbaoTargets[idx] && hbaoTargets[idx]->resource &&
-				hbaoBackedUp[idx].texture) {
-				D3D11_TEXTURE2D_DESC lowDesc{};
-				hbaoTargets[idx]->resource->GetDesc(&lowDesc);
-				D3D11_BOX resultBox{};
-				resultBox.left = 0;
-				resultBox.top = 0;
-				resultBox.front = 0;
-				resultBox.right = lowDesc.Width;
-				resultBox.bottom = lowDesc.Height;
-				resultBox.back = 1;
-				ctx->CopySubresourceRegion(hbaoBackedUp[idx].texture, 0, 0, 0, 0, hbaoTargets[idx]->resource, 0, &resultBox);
-			}
-		}
 		if (ctx && rendererData) {
 			ID3D11ShaderResourceView* boundPS[16]{};
 			ctx->PSGetShaderResources(0, 16, boundPS);
@@ -1936,6 +1914,32 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 		InvokeHBAODynRes(true);
 		GetDynWidthRatio(rtMgr) = hbaoSavedWidthRatio;
 		GetDynHeightRatio(rtMgr) = hbaoSavedHeightRatio;
+	}
+
+	void Upscaling::ExitHBAO()
+	{
+		if (!hbaoActive) {
+			return;
+		}
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		if (rendererData && ctx) {
+			std::uint32_t idx = RenderTarget::kSSAOFinal;
+			if (idx < kScaledTargetSpan && hbaoMapped[idx] && hbaoTargets[idx] && hbaoTargets[idx]->resource &&
+				hbaoBackedUp[idx].texture) {
+				D3D11_TEXTURE2D_DESC lowDesc{};
+				hbaoTargets[idx]->resource->GetDesc(&lowDesc);
+				D3D11_BOX resultBox{};
+				resultBox.left = 0;
+				resultBox.top = 0;
+				resultBox.front = 0;
+				resultBox.right = lowDesc.Width;
+				resultBox.bottom = lowDesc.Height;
+				resultBox.back = 1;
+				ctx->CopySubresourceRegion(hbaoBackedUp[idx].texture, 0, 0, 0, 0, hbaoTargets[idx]->resource, 0, &resultBox);
+			}
+		}
+		RestoreHBAOState();
 	}
 
 	void Upscaling::RefreshHBAOCache()
@@ -2095,80 +2099,7 @@ if (xessDepthTexture && xessDepthTexture->uav && depthCopyShader) {
 
 	void Upscaling::ReleaseHBAOCache()
 	{
-		if (hbaoActive) {
-			auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
-			auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
-			auto* ctx = GetImmediateContext();
-			hbaoActive = false;
-			if (ctx && rendererData) {
-				ID3D11ShaderResourceView* boundPS[16]{};
-				ctx->PSGetShaderResources(0, 16, boundPS);
-				for (std::uint32_t slot = 0; slot < 16; slot++) {
-					auto* current = boundPS[slot];
-					if (!current) {
-						continue;
-					}
-					for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
-						std::uint32_t idx = kScaledTargets[k];
-						if (idx >= rendererData->renderTargets.size()) {
-							continue;
-						}
-						auto* lowSRV = (hbaoMapped[idx] && hbaoTargets[idx]) ? hbaoTargets[idx]->srv : nullptr;
-						auto* fullSRV = hbaoMapped[idx] ? hbaoBackedUp[idx].srView : nullptr;
-						if (lowSRV && fullSRV && current == lowSRV) {
-							ctx->PSSetShaderResources(slot, 1, &fullSRV);
-							break;
-						}
-					}
-					current->Release();
-				}
-			}
-			if (rendererData) {
-				for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
-					std::uint32_t idx = kScaledTargets[k];
-					if (idx >= rendererData->renderTargets.size()) {
-						continue;
-					}
-					if (!hbaoMapped[idx]) {
-						continue;
-					}
-					auto& live = rendererData->renderTargets[idx];
-					live.texture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].texture);
-					live.copyTexture = reinterpret_cast<REX::W32::ID3D11Texture2D*>(hbaoBackedUp[idx].copyTexture);
-					live.rtView = reinterpret_cast<REX::W32::ID3D11RenderTargetView*>(hbaoBackedUp[idx].rtView);
-					live.srView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].srView);
-					live.copySRView = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoBackedUp[idx].copySRView);
-					live.uaView = reinterpret_cast<REX::W32::ID3D11UnorderedAccessView*>(hbaoBackedUp[idx].uaView);
-					hbaoMapped[idx] = false;
-				}
-				for (std::uint32_t k = 0; k < kScaledTargetCount; k++) {
-					std::uint32_t idx = kScaledTargets[k];
-					if (idx < kScaledTargetSpan) {
-						hbaoBackedUp[idx] = HBAOSlot{};
-					}
-				}
-			}
-			if (hbaoMetaHeld) {
-				for (std::uint32_t i = 0; i < kHBAOMetaCount; i++) {
-					rtMgr.renderTargetDataArray[i] = hbaoSavedMeta[i];
-				}
-				hbaoMetaHeld = false;
-			}
-			if (hbaoDepthMapped) {
-				if (rendererData && hbaoDepthBackedUp) {
-					rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
-						reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(hbaoDepthBackedUp);
-				}
-				if (hbaoDepthBackedUp) {
-					hbaoDepthBackedUp->Release();
-					hbaoDepthBackedUp = nullptr;
-				}
-				hbaoDepthMapped = false;
-			}
-			InvokeHBAODynRes(true);
-			GetDynWidthRatio(rtMgr) = hbaoSavedWidthRatio;
-			GetDynHeightRatio(rtMgr) = hbaoSavedHeightRatio;
-		}
+		RestoreHBAOState();
 		if (hbaoDepthBackedUp) {
 			hbaoDepthBackedUp->Release();
 			hbaoDepthBackedUp = nullptr;

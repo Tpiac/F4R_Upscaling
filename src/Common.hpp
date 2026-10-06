@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstdint>
+#include <string>
+
 #include <d3d11.h>
-#include <d3d11_4.h>
 #include <d3d12.h>
 
 #ifndef F4R_HAS_DLSS
@@ -13,16 +15,18 @@
 #ifndef F4R_HAS_XESS
 	#define F4R_HAS_XESS 1
 #endif
+#ifndef F4R_HAS_STREAMLINE
+	#define F4R_HAS_STREAMLINE 1
+#endif
 #ifndef F4R_DEFAULT_Method
-	#ifdef F4R_DEFAULT_AAMODE
-		#define F4R_DEFAULT_Method F4R_DEFAULT_AAMODE
-	#else
-		#define F4R_DEFAULT_Method 1
-	#endif
+	#define F4R_DEFAULT_Method 1
 #endif
 
-#define F4R_STRINGIFY_IMPL(x) #x
-#define F4R_STRINGIFY(x) F4R_STRINGIFY_IMPL(x)
+#if F4R_HAS_DLSS && F4R_HAS_FSR3 && F4R_HAS_XESS
+	#define F4R_HAS_MULTI 1
+#else
+	#define F4R_HAS_MULTI 0
+#endif
 
 namespace RE::BSGraphics
 {
@@ -126,8 +130,8 @@ namespace F4R_Upscaling
 		float fAnisotropicMipBias = -0.0001f;
 		int32_t iQualityMode = 0;
 
-		float fQualityScale = 0.667f;
-		float fBalancedScale = 0.588f;
+		float fQualityScale = 0.65f;
+		float fBalancedScale = 0.59f;
 		float fPerformanceScale = 0.5f;
 
 		bool bEnableReflex = false;
@@ -162,22 +166,16 @@ namespace F4R_Upscaling
 		ID3D11Texture2D* resource = nullptr;
 		ID3D11ShaderResourceView* srv = nullptr;
 		ID3D11UnorderedAccessView* uav = nullptr;
-		ID3D11RenderTargetView* rtv = nullptr;
 		ID3D12Resource* resource12 = nullptr;
 
 		~SharedTexture2D()
 		{
 			if (uav) uav->Release();
 			if (srv) srv->Release();
-			if (rtv) rtv->Release();
 			if (resource) resource->Release();
 			if (resource12) resource12->Release();
 		}
 	};
-
-	struct Streamline;
-
-	struct XeSS;
 }
 
 extern bool g_enbLoaded;
@@ -189,6 +187,27 @@ void ExtractRealD3D11();
 
 namespace F4R_Upscaling
 {
+	inline std::string GetModuleDirectory()
+	{
+		char buf[MAX_PATH] = {};
+		GetModuleFileNameA(GetModuleHandleA(F4R_MODULE_NAME), buf, MAX_PATH);
+		std::string path(buf);
+		return path.substr(0, path.rfind('\\') + 1);
+	}
+
+	inline std::string GetPluginINIPath()
+	{
+		return GetModuleDirectory() + F4R_MODULE_NAME + ".ini";
+	}
+
+	inline std::uint64_t GetFileWriteTime(const std::string& a_path)
+	{
+		WIN32_FILE_ATTRIBUTE_DATA attrs{};
+		if (!GetFileAttributesExA(a_path.c_str(), GetFileExInfoStandard, &attrs)) return 0;
+		return (static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwHighDateTime) << 32) |
+			static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwLowDateTime);
+	}
+
 	inline SamplerStates* GetGlobalSamplers()
 	{
 		std::uintptr_t id = IsOG() ? 0xad18ull : 0x294447ull;

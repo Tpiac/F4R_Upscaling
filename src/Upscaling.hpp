@@ -22,7 +22,7 @@ namespace F4R_Upscaling
 		~Upscaling();
 
 		void Init();
-		void LoadSettings(const std::string& a_iniPath);
+		void LoadSettings();
 
 		void InstallHooks();
 
@@ -36,6 +36,9 @@ namespace F4R_Upscaling
 		void RebuildSamplerCache(float a_bias);
 
 		void UpdateGameSettings();
+		void RestoreAASettings();
+		void PollMethodChange();
+		void ReturnToVanilla();
 		void CheckResources();
 		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
 		void InvalidateFlareDepth();
@@ -48,6 +51,13 @@ namespace F4R_Upscaling
 
 		void RefreshHBAOCache();
 		void ReleaseHBAOCache();
+		void EnsureSharpenResources(
+			ID3D11Device* a_device,
+			uint32_t a_width,
+			uint32_t a_height,
+			DXGI_FORMAT a_backBufferFormat,
+			DXGI_FORMAT a_srvFormat);
+		void EnsureMotionVectorFixResources(ID3D11Device* a_device);
 		bool EnterHBAO();
 		void ExitHBAO();
 		void InvokeHBAODynRes(bool a_dynamic);
@@ -132,11 +142,19 @@ namespace F4R_Upscaling
 #endif
 
 	private:
+		void RestoreHBAOState();
+
 		Upscaling() = default;
 
-		std::string settingsIniPath;
 		std::uint64_t settingsIniWriteTime = 0;
 		bool settingsIniHasTime = false;
+		std::uint64_t methodIniWriteTime = 0;
+		bool methodIniHasTime = false;
+		int32_t lastRequestedMethod = -1;
+		bool fxaaStateSaved = false;
+		bool fxaaOriginalActive = false;
+		bool taaFlagSaved = false;
+		bool taaFlagOriginal = false;
 		std::atomic<bool> pendingSettingsRefresh = false;
 		bool resourcesCreated = false;
 		uint32_t cachedWidth = 0;
@@ -152,5 +170,7 @@ namespace F4R_Upscaling
 #endif
 
 		int startupFrameGuard = 0;
+		bool initialized = false;
+		float prevScale = 1.0f;
 	};
 }

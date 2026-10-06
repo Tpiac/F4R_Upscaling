@@ -2,6 +2,7 @@
 
 #if F4R_HAS_XESS
 
+#include <d3d11_4.h>
 #include <d3d12.h>
 #include <xess/xess.h>
 #include <xess/xess_d3d12.h>
@@ -14,11 +15,9 @@ namespace F4R_Upscaling
 		using PFun_xessD3D12Init = xess_result_t(*)(xess_context_handle_t, const xess_d3d12_init_params_t*);
 		using PFun_xessD3D12Execute = xess_result_t(*)(xess_context_handle_t, ID3D12GraphicsCommandList*, const xess_d3d12_execute_params_t*);
 		using PFun_xessDestroyContext = xess_result_t(*)(xess_context_handle_t);
-		using PFun_xessGetInputResolution = xess_result_t(*)(xess_context_handle_t, const xess_2d_t*, xess_quality_settings_t, xess_2d_t*);
 		using PFun_xessSetJitterScale = xess_result_t(*)(xess_context_handle_t, float, float);
 		using PFun_xessSetVelocityScale = xess_result_t(*)(xess_context_handle_t, float, float);
 		using PFun_xessIsOptimalDriver = xess_result_t(*)(xess_context_handle_t);
-		using PFun_xessGetVersion = xess_result_t(*)(xess_version_t*);
 
 		HMODULE module = nullptr;
 
@@ -26,11 +25,9 @@ namespace F4R_Upscaling
 		PFun_xessD3D12Init xessD3D12Init = nullptr;
 		PFun_xessD3D12Execute xessD3D12Execute = nullptr;
 		PFun_xessDestroyContext xessDestroyContext = nullptr;
-		PFun_xessGetInputResolution xessGetInputResolution = nullptr;
 		PFun_xessSetJitterScale xessSetJitterScale = nullptr;
 		PFun_xessSetVelocityScale xessSetVelocityScale = nullptr;
 		PFun_xessIsOptimalDriver xessIsOptimalDriver = nullptr;
-		PFun_xessGetVersion xessGetVersion = nullptr;
 
 		xess_context_handle_t context = nullptr;
 
@@ -67,7 +64,6 @@ namespace F4R_Upscaling
 		bool CreateD3D12(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
 		bool CreateContext(uint32_t a_width, uint32_t a_height, int a_qualityMode = 0);
 		void TeardownD3D12();
-		void Destroy();
 
 		bool CreateSharedTexture(
 			SharedTexture2D* a_out,

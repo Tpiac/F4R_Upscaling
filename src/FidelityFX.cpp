@@ -315,8 +315,12 @@ namespace F4R_Upscaling
 
 		FfxErrorCode err = ffxFsr3ContextDispatchUpscale(&fsrContext, &dispatch);
 		if (err != FFX_OK) {
-			REX::LogError("ffxFsr3ContextDispatchUpscale failed error={} (0x{:x})",
-				static_cast<int>(err), static_cast<int>(err));
+			static bool dispatchLogged = false;
+			if (!dispatchLogged) {
+				dispatchLogged = true;
+				REX::LogError("ffxFsr3ContextDispatchUpscale failed error={} (0x{:x})",
+					static_cast<int>(err), static_cast<int>(err));
+			}
 		}
 
 		ID3D11Buffer* nullCB = nullptr;
@@ -374,7 +378,11 @@ namespace F4R_Upscaling
 
 		FfxErrorCode err = ffxFsr3ContextGenerateReactiveMask(&fsrContext, &desc);
 		if (err != FFX_OK) {
-			REX::LogError("GenerateReactiveMask failed error={}", static_cast<int>(err));
+			static bool maskLogged = false;
+			if (!maskLogged) {
+				maskLogged = true;
+				REX::LogError("GenerateReactiveMask failed error={}", static_cast<int>(err));
+			}
 		}
 
 		ID3D11Buffer* nullCB = nullptr;

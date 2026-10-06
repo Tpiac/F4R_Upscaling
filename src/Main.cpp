@@ -1,6 +1,7 @@
 #include "PCH.hpp"
+#include "Config.hpp"
 #include "Upscaling.hpp"
-#if F4R_HAS_DLSS
+#if F4R_HAS_STREAMLINE
 #include "Streamline.hpp"
 #endif
 #if F4R_HAS_XESS
@@ -15,8 +16,6 @@ bool g_enbLoaded = false;
 bool g_enbExtractionFailed = false;
 ID3D11Device* g_realDevice = nullptr;
 ID3D11DeviceContext* g_realContext = nullptr;
-
-namespace { std::string GetPluginINIPath(); }
 
 void ExtractRealD3D11()
 {
@@ -38,9 +37,8 @@ void ExtractRealD3D11()
 	uintptr_t enbEnd = enbStart + enbInfo.SizeOfImage;
 	if ((uintptr_t)vtable < enbStart || (uintptr_t)vtable >= enbEnd) return;
 
-	const std::string iniPath = GetPluginINIPath();
-	const std::ptrdiff_t devOffset = GetPrivateProfileIntA("ENB", "DeviceOffset", 0x28, iniPath.c_str());
-	const std::ptrdiff_t ctxOffset = GetPrivateProfileIntA("ENB", "ContextOffset", 0x6C20, iniPath.c_str());
+	constexpr std::ptrdiff_t devOffset = F4R_Upscaling::Config::kENBDeviceOffset;
+	constexpr std::ptrdiff_t ctxOffset = F4R_Upscaling::Config::kENBContextOffset;
 
 	g_realDevice = *(ID3D11Device**)((char*)wrappedDev + devOffset);
 	g_realContext = *(ID3D11DeviceContext**)((char*)wrappedCtx + ctxOffset);
@@ -87,20 +85,6 @@ namespace
 		return false;
 	}
 
-	std::string GetPluginINIPath()
-	{
-		static std::string path;
-		if (path.empty()) {
-			char buf[MAX_PATH];
-			GetModuleFileNameA(GetModuleHandleA(F4R_MODULE_NAME), buf, sizeof(buf));
-			path = buf;
-			path = path.substr(0, path.rfind('\\') + 1);
-			path += F4R_MODULE_NAME;
-			path += ".ini";
-		}
-		return path;
-	}
-
 	int32_t GetConfiguredMode()
 	{
 #if F4R_HAS_DLSS && !F4R_HAS_FSR3 && !F4R_HAS_XESS
@@ -110,167 +94,19 @@ namespace
 #elif !F4R_HAS_DLSS && !F4R_HAS_FSR3 && F4R_HAS_XESS
 		return static_cast<int32_t>(F4R_Upscaling::Method::XeSS);
 #else
-		return GetPrivateProfileIntA("Settings", "iMethod", F4R_DEFAULT_Method, GetPluginINIPath().c_str());
+		return F4R_Upscaling::Config::GetSingleton().GetInt("Settings", "iMethod", F4R_DEFAULT_Method);
 #endif
 	}
 
-	void CreateDefaultINI()
+	void LoadConfig()
 	{
-		std::string path = GetPluginINIPath();
-		if (GetFileAttributesA(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-			return;
+		auto& config = F4R_Upscaling::Config::GetSingleton();
+		const std::string iniPath = F4R_Upscaling::GetPluginINIPath();
+		if (config.Load(iniPath)) return;
 
-#if !F4R_HAS_FSR3 && F4R_HAS_DLSS
-
-		std::string content =
-			"[Settings]\n"
-			"; Settings apply in-game without restarting.\n"
-			"\n"
-			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
-			"; ENB forces Native\n"
-			"iQualityMode=0\n"
-			"\n"
-			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
-			"fSharpness=0.5\n"
-			"\n"
-			"; NVIDIA Reflex to reduce game latency\n"
-			"bEnableReflex=0\n"
-			"bReflexBoost=0\n"
-			"\n"
-			"[Advanced]\n"
-			"; Quality mode resolution scales. SDK optimum = 0.667 (Quality), 0.588 (Balanced), 0.50 (Performance)\n"
-			"; Ranging from 0.60 to 0.67\n"
-			"fQualityScale=0.667\n"
-			"; Ranging from 0.55 to 0.62\n"
-			"fBalancedScale=0.588\n"
-			"; Ranging from 0.50 to 0.55\n"
-			"fPerformanceScale=0.50\n"
-			"\n"
-			"; Reflex FPS limiter\n"
-			"bReflexUseFPSLimit=0\n"
-			"fReflexFPSLimit=60\n"
-			"\n"
-			"; -0.0001 = default safety net to preserve samplers from being overridden\n"
-			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
-			"; Custom values apply in Native mode only\n"
-			"fAnisotropicMipBias=-0.0001\n";
-
-#elif !F4R_HAS_DLSS && F4R_HAS_FSR3
-
-		std::string content =
-			"[Settings]\n"
-			"; Settings apply in-game without restarting.\n"
-			"\n"
-			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
-			"; ENB forces Native\n"
-			"iQualityMode=0\n"
-			"\n"
-			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
-			"fSharpness=0.5\n"
-			"\n"
-			"[Advanced]\n"
-			"; Quality mode resolution scales. SDK optimum = 0.667 (Quality), 0.588 (Balanced), 0.50 (Performance)\n"
-			"; Ranging from 0.60 to 0.67\n"
-			"fQualityScale=0.667\n"
-			"; Ranging from 0.55 to 0.62\n"
-			"fBalancedScale=0.588\n"
-			"; Ranging from 0.50 to 0.55\n"
-			"fPerformanceScale=0.50\n"
-			"\n"
-			"; -0.0001 = default safety net to preserve samplers from being overridden\n"
-			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
-			"; Custom values apply in Native mode only\n"
-			"fAnisotropicMipBias=-0.0001\n"
-			"\n"
-			"[ENB]\n"
-			"; ENB D3D11 proxy bypass offsets\n"
-			"DeviceOffset=0x28\n"
-			"ContextOffset=0x6C20\n";
-
-#elif !F4R_HAS_DLSS && !F4R_HAS_FSR3 && F4R_HAS_XESS
-
-		std::string content =
-			"[Settings]\n"
-			"; Settings marked with (*) apply in-game without restarting.\n"
-			"\n"
-			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
-			"; ENB forces Native\n"
-			"iQualityMode=0\n"
-			"\n"
-			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
-			"fSharpness=0.5\n"
-			"\n"
-			"[Advanced]\n"
-			"; Quality mode resolution scales. SDK optimum = 0.667 (Quality), 0.588 (Balanced), 0.50 (Performance)\n"
-			"; Ranging from 0.60 to 0.67\n"
-			"fQualityScale=0.667\n"
-			"; Ranging from 0.55 to 0.62\n"
-			"fBalancedScale=0.588\n"
-			"; Ranging from 0.50 to 0.55\n"
-			"fPerformanceScale=0.50\n"
-			"\n"
-			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
-			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
-			"; Custom values apply in Native mode only\n"
-			"fAnisotropicMipBias=-0.0001\n"
-			"\n"
-			"[ENB]\n"
-			"; ENB D3D11 proxy bypass offsets\n"
-			"DeviceOffset=0x28\n"
-			"ContextOffset=0x6C20\n";
-
-#else
-
-		std::string content =
-			"[Settings]\n"
-			"; Settings marked with (*) apply in-game without restarting.\n"
-			"; (*) Applies to DLSS & FSR3 only. For XeSS, only fAnisotropicMipBias works in realtime.\n"
-			"\n"
-			"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
-			"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off\n"
-			"iMethod=1\n"
-			"\n"
-			"; (*) 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
-			"; ENB forces Native\n"
-			"iQualityMode=0\n"
-			"\n"
-			"; (*) RCAS sharpness - 0.0 = no sharpening, 1.0 = max\n"
-			"fSharpness=0.5\n"
-			"\n"
-			"; (*) NVIDIA Reflex to reduce game latency (DLSS)\n"
-			"bEnableReflex=0\n"
-			"bReflexBoost=0\n"
-			"\n"
-			"[Advanced]\n"
-			"; (*) Quality mode resolution scales. SDK optimum = 0.667 (Quality), 0.588 (Balanced), 0.50 (Performance)\n"
-			"; Ranging from 0.60 to 0.67\n"
-			"fQualityScale=0.667\n"
-			"; Ranging from 0.55 to 0.62\n"
-			"fBalancedScale=0.588\n"
-			"; Ranging from 0.50 to 0.55\n"
-			"fPerformanceScale=0.50\n"
-			"\n"
-			"; (*) Reflex FPS limiter (DLSS)\n"
-			"bReflexUseFPSLimit=0\n"
-			"fReflexFPSLimit=60\n"
-			"\n"
-			"; (*) -0.0001 = default safety net to preserve samplers from being overridden\n"
-			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
-			"; Custom values apply in Native mode only\n"
-			"fAnisotropicMipBias=-0.0001\n"
-			"\n"
-			"[ENB]\n"
-			"; ENB D3D11 proxy bypass offsets (FSR3 & XeSS)\n"
-			"DeviceOffset=0x28\n"
-			"ContextOffset=0x6C20\n";
-
-#endif
-
-		HANDLE file = CreateFileA(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-		if (file != INVALID_HANDLE_VALUE) {
-			DWORD written;
-			WriteFile(file, content.c_str(), static_cast<DWORD>(content.size()), &written, nullptr);
-			CloseHandle(file);
+		config.WriteDefaults(iniPath);
+		if (!config.Load(iniPath)) {
+			REX::LogCritical("Could not load {}", iniPath);
 		}
 	}
 
@@ -280,8 +116,7 @@ namespace
 		case F4SE::MessagingInterface::MessageType::kPostLoad:
 			{
 				g_enbLoaded = IsENBLoaded();
-				CreateDefaultINI();
-				F4R_Upscaling::Upscaling::GetSingleton().LoadSettings(GetPluginINIPath());
+				F4R_Upscaling::Upscaling::GetSingleton().LoadSettings();
 				F4R_Upscaling::Upscaling::GetSingleton().Init();
 				break;
 			}
@@ -299,6 +134,7 @@ namespace
 	}
 }
 
+#if F4R_HAS_STREAMLINE
 namespace F4R_Upscaling
 {
 	using D3D11CreateDeviceAndSwapChainFunc = HRESULT(WINAPI*)(
@@ -322,7 +158,6 @@ namespace F4R_Upscaling
 			a_featureLevel, a_immediateContext);
 
 		if (SUCCEEDED(hr)) {
-#if F4R_HAS_DLSS
 			auto& streamline = Streamline::GetSingleton();
 			if (streamline.interposer) {
 				streamline.Initialize();
@@ -337,11 +172,8 @@ namespace F4R_Upscaling
 
 				streamline.CheckFeatures(a_adapter);
 
-				if (streamline.featureDLSS) {
-					streamline.PostDevice();
-				}
+				streamline.PostDevice();
 			}
-#endif
 		}
 
 		return hr;
@@ -361,6 +193,7 @@ namespace F4R_Upscaling
 			REX::LogWarning("D3D11CreateDeviceAndSwapChain IAT hook FAILED");
 	}
 }
+#endif
 
 F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 {
@@ -370,18 +203,16 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 
 	REX::LogInformation("F4SE {} & {}", F4SE::GetF4SEVersion(), F4SE::GetRuntimeVersion());
 
+	LoadConfig();
+
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(REX::NotNull{ &OnF4SEMessage });
 
-#if F4R_HAS_DLSS
-	{
-		int32_t mode = GetConfiguredMode();
-		if (mode == static_cast<int32_t>(F4R_Upscaling::Method::DLSS)) {
-			F4R_Upscaling::Streamline::GetSingleton().LoadInterposer();
-			F4R_Upscaling::InstallD3D11Hook();
-		}
-	}
+#if F4R_HAS_STREAMLINE
+	F4R_Upscaling::Streamline::GetSingleton().LoadInterposer();
+	F4R_Upscaling::InstallD3D11Hook();
 #endif
+
 #if F4R_HAS_XESS
 	if (GetConfiguredMode() == static_cast<int32_t>(F4R_Upscaling::Method::XeSS)) {
 		F4R_Upscaling::XeSS::GetSingleton().Load();

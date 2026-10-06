@@ -61,15 +61,7 @@ namespace F4R_Upscaling
 		if (module) return true;
 		if (failed) return false;
 
-		char buf[MAX_PATH];
-		if (!GetModuleFileNameA(GetModuleHandleA(F4R_MODULE_NAME), buf, sizeof(buf))) {
-			REX::LogCritical("Failed to resolve plugin path");
-			failed = true;
-			return false;
-		}
-
-		std::string dir = buf;
-		dir = dir.substr(0, dir.rfind('\\') + 1);
+		const std::string dir = GetModuleDirectory();
 		std::wstring dllPath(dir.begin(), dir.end());
 		dllPath += L"XeSS\\libxess.dll";
 
@@ -88,11 +80,9 @@ namespace F4R_Upscaling
 		xessD3D12Init = reinterpret_cast<PFun_xessD3D12Init>(resolve("xessD3D12Init"));
 		xessD3D12Execute = reinterpret_cast<PFun_xessD3D12Execute>(resolve("xessD3D12Execute"));
 		xessDestroyContext = reinterpret_cast<PFun_xessDestroyContext>(resolve("xessDestroyContext"));
-		xessGetInputResolution = reinterpret_cast<PFun_xessGetInputResolution>(resolve("xessGetInputResolution"));
 		xessSetJitterScale = reinterpret_cast<PFun_xessSetJitterScale>(resolve("xessSetJitterScale"));
 		xessSetVelocityScale = reinterpret_cast<PFun_xessSetVelocityScale>(resolve("xessSetVelocityScale"));
 		xessIsOptimalDriver = reinterpret_cast<PFun_xessIsOptimalDriver>(resolve("xessIsOptimalDriver"));
-		xessGetVersion = reinterpret_cast<PFun_xessGetVersion>(resolve("xessGetVersion"));
 
 		if (!xessD3D12CreateContext || !xessD3D12Init || !xessD3D12Execute || !xessDestroyContext) {
 			REX::LogCritical("Failed to resolve XeSS exports");
@@ -402,7 +392,11 @@ namespace F4R_Upscaling
 
 		xess_result_t r = xessD3D12Execute(context, list, &exec);
 		if (r != XESS_RESULT_SUCCESS) {
-			REX::LogError("xessD3D12Execute failed ({})", XeSSResultToString(r));
+			static bool executeLogged = false;
+			if (!executeLogged) {
+				executeLogged = true;
+				REX::LogError("xessD3D12Execute failed ({})", XeSSResultToString(r));
+			}
 		}
 
 		XeSSResourceBarrier(list, a_output->resource12, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON);
@@ -440,42 +434,6 @@ namespace F4R_Upscaling
 		if (context4) { context4->Release(); context4 = nullptr; }
 		if (device5) { device5->Release(); device5 = nullptr; }
 		device11 = nullptr;
-	}
-
-	void XeSS::Destroy()
-	{
-		if (context && xessDestroyContext) {
-			xessDestroyContext(context);
-			context = nullptr;
-		}
-
-		if (fenceEvent) {
-			CloseHandle(fenceEvent);
-			fenceEvent = nullptr;
-		}
-
-		if (d3d11Fence) { d3d11Fence->Release(); d3d11Fence = nullptr; }
-		if (fence) { fence->Release(); fence = nullptr; }
-		for (uint32_t i = 0; i < 2; i++) {
-			if (commandLists[i]) { commandLists[i]->Release(); commandLists[i] = nullptr; }
-			if (commandAllocators[i]) { commandAllocators[i]->Release(); commandAllocators[i] = nullptr; }
-		}
-		if (commandQueue) { commandQueue->Release(); commandQueue = nullptr; }
-		if (device) { device->Release(); device = nullptr; }
-		if (context4) { context4->Release(); context4 = nullptr; }
-		if (device5) { device5->Release(); device5 = nullptr; }
-		device11 = nullptr;
-
-		if (module) {
-			FreeLibrary(module);
-			module = nullptr;
-		}
-
-		initialized = false;
-		loaded = false;
-		disabled = false;
-		velocityScaleX = 0.0f;
-		velocityScaleY = 0.0f;
 	}
 }
 #endif

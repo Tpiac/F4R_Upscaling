@@ -2,12 +2,11 @@
 #include "Streamline.hpp"
 #include "Upscaling.hpp"
 
-#include <psapi.h>
 #include <xmmintrin.h>
 #include <cmath>
 #include <sl_matrix_helpers.h>
 
-#if F4R_HAS_DLSS
+#if F4R_HAS_STREAMLINE
 
 namespace F4R_Upscaling
 {
@@ -75,19 +74,14 @@ namespace F4R_Upscaling
 		};
 
 		slInit = reinterpret_cast<PFun_slInit*>(resolve("slInit"));
-		slShutdown = reinterpret_cast<PFun_slShutdown*>(resolve("slShutdown"));
 		slIsFeatureSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(resolve("slIsFeatureSupported"));
 		slIsFeatureLoaded = reinterpret_cast<PFun_slIsFeatureLoaded*>(resolve("slIsFeatureLoaded"));
 		slSetFeatureLoaded = reinterpret_cast<PFun_slSetFeatureLoaded*>(resolve("slSetFeatureLoaded"));
 		slEvaluateFeature = reinterpret_cast<PFun_slEvaluateFeature*>(resolve("slEvaluateFeature"));
-		slAllocateResources = reinterpret_cast<PFun_slAllocateResources*>(resolve("slAllocateResources"));
-		slFreeResources = reinterpret_cast<PFun_slFreeResources*>(resolve("slFreeResources"));
 		slSetTagForFrame = reinterpret_cast<PFun_slSetTagForFrame*>(resolve("slSetTagForFrame"));
 		slGetFeatureRequirements = reinterpret_cast<PFun_slGetFeatureRequirements*>(resolve("slGetFeatureRequirements"));
-		slGetFeatureVersion = reinterpret_cast<PFun_slGetFeatureVersion*>(resolve("slGetFeatureVersion"));
 		slUpgradeInterface = reinterpret_cast<PFun_slUpgradeInterface*>(resolve("slUpgradeInterface"));
 		slSetConstants = reinterpret_cast<PFun_slSetConstants*>(resolve("slSetConstants"));
-		slGetNativeInterface = reinterpret_cast<PFun_slGetNativeInterface*>(resolve("slGetNativeInterface"));
 		slGetFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(resolve("slGetFeatureFunction"));
 		slGetNewFrameToken = reinterpret_cast<PFun_slGetNewFrameToken*>(resolve("slGetNewFrameToken"));
 		slSetD3DDevice = reinterpret_cast<PFun_slSetD3DDevice*>(resolve("slSetD3DDevice"));
@@ -183,9 +177,11 @@ namespace F4R_Upscaling
 	void Streamline::PostDevice()
 	{
 		if (featureDLSS) {
-			slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", reinterpret_cast<void*&>(slDLSSGetOptimalSettings));
-			slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetState", reinterpret_cast<void*&>(slDLSSGetState));
-			slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", reinterpret_cast<void*&>(slDLSSSetOptions));
+			const bool dlssBound =
+				slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", reinterpret_cast<void*&>(slDLSSSetOptions)) == sl::Result::eOk;
+			if (!dlssBound) {
+				REX::LogWarning("Streamline: slDLSSSetOptions not resolved, DLSS dispatch unavailable");
+			}
 		}
 
 		if (nvidiaAdapter) {
@@ -193,6 +189,8 @@ namespace F4R_Upscaling
 			bound &= slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", reinterpret_cast<void*&>(slReflexSleep)) == sl::Result::eOk;
 			featureReflex = bound && slReflexSetOptions && slReflexSleep;
 			REX::LogInformation("Streamline: Reflex {}", featureReflex ? "initialized" : "not initialized");
+		} else {
+			REX::LogInformation("Streamline: Reflex is not available");
 		}
 	}
 
@@ -246,13 +244,21 @@ namespace F4R_Upscaling
 		constants.motionVectorsJittered = sl::Boolean::eFalse;
 
 		if (!AcquireFrameToken()) {
-			REX::LogError("Could not get frame token");
+			static bool tokenLogged = false;
+			if (!tokenLogged) {
+				tokenLogged = true;
+				REX::LogError("Could not get frame token");
+			}
 			return;
 		}
 
 		sl::Result res = slSetConstants(constants, *frameToken, viewport);
 		if (res != sl::Result::eOk) {
-			REX::LogError("Could not set constants (result={})", static_cast<int>(res));
+			static bool constantsLogged = false;
+			if (!constantsLogged) {
+				constantsLogged = true;
+				REX::LogError("Could not set constants (result={})", static_cast<int>(res));
+			}
 		}
 	}
 
@@ -333,7 +339,11 @@ namespace F4R_Upscaling
 		uint32_t a_qualityMode)
 	{
 		if (!AcquireFrameToken()) {
-			REX::LogError("Could not get frame token");
+			static bool tokenLogged = false;
+			if (!tokenLogged) {
+				tokenLogged = true;
+				REX::LogError("Could not get frame token");
+			}
 			return;
 		}
 
@@ -373,7 +383,11 @@ namespace F4R_Upscaling
 
 		sl::Result res = slDLSSSetOptions(viewport, options);
 		if (res != sl::Result::eOk) {
-			REX::LogCritical("Could not enable DLSS (result={})", static_cast<int>(res));
+			static bool optionsLogged = false;
+			if (!optionsLogged) {
+				optionsLogged = true;
+				REX::LogCritical("Could not enable DLSS (result={})", static_cast<int>(res));
+			}
 		}
 
 		sl::Resource colorIn(sl::ResourceType::eTex2d, a_colorResource);
@@ -402,13 +416,21 @@ namespace F4R_Upscaling
 
 		res = slSetTagForFrame(*frameToken, viewport, tags, 4, ctx);
 		if (res != sl::Result::eOk) {
-			REX::LogError("slSetTagForFrame failed (result={})", static_cast<int>(res));
+			static bool tagLogged = false;
+			if (!tagLogged) {
+				tagLogged = true;
+				REX::LogError("slSetTagForFrame failed (result={})", static_cast<int>(res));
+			}
 		}
 
 		const sl::BaseStructure* inputs[] = { &viewport };
 		res = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, ctx);
 		if (res != sl::Result::eOk) {
-			REX::LogError("slEvaluateFeature failed (result={})", static_cast<int>(res));
+			static bool evalLogged = false;
+			if (!evalLogged) {
+				evalLogged = true;
+				REX::LogError("slEvaluateFeature failed (result={})", static_cast<int>(res));
+			}
 		}
 
 		ID3D11Buffer* nullCB = nullptr;

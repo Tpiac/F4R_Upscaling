@@ -1,6 +1,6 @@
 #pragma once
 
-#if F4R_HAS_DLSS
+#if F4R_HAS_STREAMLINE
 
 namespace F4R_Upscaling
 {
@@ -25,25 +25,18 @@ namespace F4R_Upscaling
 		uint32_t lastReflexFrame = UINT32_MAX;
 
 		PFun_slInit* slInit = nullptr;
-		PFun_slShutdown* slShutdown = nullptr;
 		PFun_slIsFeatureSupported* slIsFeatureSupported = nullptr;
 		PFun_slIsFeatureLoaded* slIsFeatureLoaded = nullptr;
 		PFun_slSetFeatureLoaded* slSetFeatureLoaded = nullptr;
 		PFun_slEvaluateFeature* slEvaluateFeature = nullptr;
-		PFun_slAllocateResources* slAllocateResources = nullptr;
-		PFun_slFreeResources* slFreeResources = nullptr;
 		PFun_slSetTagForFrame* slSetTagForFrame = nullptr;
 		PFun_slGetFeatureRequirements* slGetFeatureRequirements = nullptr;
-		PFun_slGetFeatureVersion* slGetFeatureVersion = nullptr;
 		PFun_slUpgradeInterface* slUpgradeInterface = nullptr;
 		PFun_slSetConstants* slSetConstants = nullptr;
-		PFun_slGetNativeInterface* slGetNativeInterface = nullptr;
 		PFun_slGetFeatureFunction* slGetFeatureFunction = nullptr;
 		PFun_slGetNewFrameToken* slGetNewFrameToken = nullptr;
 		PFun_slSetD3DDevice* slSetD3DDevice = nullptr;
 
-		PFun_slDLSSGetOptimalSettings* slDLSSGetOptimalSettings = nullptr;
-		PFun_slDLSSGetState* slDLSSGetState = nullptr;
 		PFun_slDLSSSetOptions* slDLSSSetOptions = nullptr;
 
 		PFun_slReflexSetOptions* slReflexSetOptions = nullptr;
