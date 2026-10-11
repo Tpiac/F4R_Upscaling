@@ -82,50 +82,51 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (rendererData) {
-			auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[RenderTarget::kMainTemp].texture);
-			if (rt4) {
-				D3D11_TEXTURE2D_DESC rt4Desc = {};
-				rt4->GetDesc(&rt4Desc);
-				D3D11_TEXTURE2D_DESC texDesc = {};
-				texDesc.Width = rt4Desc.Width;
-				texDesc.Height = rt4Desc.Height;
-				texDesc.MipLevels = 1;
-				texDesc.ArraySize = 1;
-				texDesc.Format = rt4Desc.Format;
-				texDesc.SampleDesc.Count = 1;
-				texDesc.Usage = D3D11_USAGE_DEFAULT;
-				texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				colorOpaqueOnlyTexture = std::make_unique<Texture2D>();
-				if (FAILED(device->CreateTexture2D(&texDesc, nullptr, &colorOpaqueOnlyTexture->resource))) {
-					REX::LogError("CreateFSRResources: colorOpaqueOnly failed");
-					colorOpaqueOnlyTexture.reset();
-				} else {
-					REX::LogDebug("CreateFSRResources: colorOpaqueOnly {}x{} fmt={}",
-						texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
-				}
-			}
-
-			{
-				D3D11_TEXTURE2D_DESC texDesc = {};
-				texDesc.Width = backBufferWidth;
-				texDesc.Height = backBufferHeight;
-				texDesc.MipLevels = 1;
-				texDesc.ArraySize = 1;
-				texDesc.Format = DXGI_FORMAT_R8_UNORM;
-				texDesc.SampleDesc.Count = 1;
-				texDesc.Usage = D3D11_USAGE_DEFAULT;
-				texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-				reactiveMaskTexture = std::make_unique<Texture2D>();
-				if (FAILED(device->CreateTexture2D(&texDesc, nullptr, &reactiveMaskTexture->resource))) {
-					REX::LogError("CreateFSRResources: reactiveMask failed");
-					reactiveMaskTexture.reset();
-				} else {
-					REX::LogDebug("CreateFSRResources: reactiveMask {}x{}", texDesc.Width, texDesc.Height);
-				}
-			}
-		}
+		// no-op, reserved.
+		//auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		//if (rendererData) {
+		//	auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[RenderTarget::kMainTemp].texture);
+		//	if (rt4) {
+		//		D3D11_TEXTURE2D_DESC rt4Desc = {};
+		//		rt4->GetDesc(&rt4Desc);
+		//		D3D11_TEXTURE2D_DESC texDesc = {};
+		//		texDesc.Width = rt4Desc.Width;
+		//		texDesc.Height = rt4Desc.Height;
+		//		texDesc.MipLevels = 1;
+		//		texDesc.ArraySize = 1;
+		//		texDesc.Format = rt4Desc.Format;
+		//		texDesc.SampleDesc.Count = 1;
+		//		texDesc.Usage = D3D11_USAGE_DEFAULT;
+		//		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		//		colorOpaqueOnlyTexture = std::make_unique<Texture2D>();
+		//		if (FAILED(device->CreateTexture2D(&texDesc, nullptr, &colorOpaqueOnlyTexture->resource))) {
+		//			REX::LogError("CreateFSRResources: colorOpaqueOnly failed");
+		//			colorOpaqueOnlyTexture.reset();
+		//		} else {
+		//			REX::LogDebug("CreateFSRResources: colorOpaqueOnly {}x{} fmt={}",
+		//				texDesc.Width, texDesc.Height, static_cast<int>(texDesc.Format));
+		//		}
+		//	}
+		//
+		//	{
+		//		D3D11_TEXTURE2D_DESC texDesc = {};
+		//		texDesc.Width = backBufferWidth;
+		//		texDesc.Height = backBufferHeight;
+		//		texDesc.MipLevels = 1;
+		//		texDesc.ArraySize = 1;
+		//		texDesc.Format = DXGI_FORMAT_R8_UNORM;
+		//		texDesc.SampleDesc.Count = 1;
+		//		texDesc.Usage = D3D11_USAGE_DEFAULT;
+		//		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+		//		reactiveMaskTexture = std::make_unique<Texture2D>();
+		//		if (FAILED(device->CreateTexture2D(&texDesc, nullptr, &reactiveMaskTexture->resource))) {
+		//			REX::LogError("CreateFSRResources: reactiveMask failed");
+		//			reactiveMaskTexture.reset();
+		//		} else {
+		//			REX::LogDebug("CreateFSRResources: reactiveMask {}x{}", texDesc.Width, texDesc.Height);
+		//		}
+		//	}
+		//}
 
 		FfxFsr3ContextDescription contextDesc = {};
 		contextDesc.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY;
@@ -334,64 +335,65 @@ namespace F4R_Upscaling
 		aa.resetHistory = false;
 	}
 
-	void FidelityFX::GenerateReactiveMask()
-	{
-		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rendererData) return;
-
-		auto* ctx = GetImmediateContext();
-		if (!ctx) return;
-
-		if (!colorOpaqueOnlyTexture || !colorOpaqueOnlyTexture->resource ||
-			!reactiveMaskTexture || !reactiveMaskTexture->resource)
-			return;
-
-		auto& state = RE::BSGraphics::State::GetSingleton();
-		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
-
-		ctx->OMSetRenderTargets(0, nullptr, nullptr);
-
-		auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[RenderTarget::kMainTemp].texture);
-		if (!rt4) return;
-
-		FfxResource opaqueResource;
-		FfxResourceFromDX11Texture(opaqueResource, colorOpaqueOnlyTexture->resource);
-
-		FfxResource fullResource;
-		FfxResourceFromDX11Texture(fullResource, rt4);
-
-		FfxResource reactiveResource;
-		FfxResourceFromDX11Texture(reactiveResource, reactiveMaskTexture->resource);
-
-		uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr) + 0.5f);
-		uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr) + 0.5f);
-
-		FfxFsr3GenerateReactiveDescription desc = {};
-		desc.commandList = reinterpret_cast<FfxCommandList>(ctx);
-		desc.colorOpaqueOnly = opaqueResource;
-		desc.colorPreUpscale = fullResource;
-		desc.outReactive = reactiveResource;
-		desc.renderSize = { renderW, renderH };
-		desc.flags = 8;
-		desc.scale = 0.5f;
-		desc.cutoffThreshold = 0.0f;
-
-		FfxErrorCode err = ffxFsr3ContextGenerateReactiveMask(&fsrContext, &desc);
-		if (err != FFX_OK) {
-			static bool maskLogged = false;
-			if (!maskLogged) {
-				maskLogged = true;
-				REX::LogError("GenerateReactiveMask failed error={}", static_cast<int>(err));
-			}
-		}
-
-		ID3D11Buffer* nullCB = nullptr;
-		ID3D11UnorderedAccessView* nullUAVs[8] = {};
-		ID3D11ShaderResourceView* nullSRVs[16] = {};
-		ctx->CSSetConstantBuffers(0, 1, &nullCB);
-		ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
-		ctx->CSSetShaderResources(0, 16, nullSRVs);
-		ctx->CSSetShader(nullptr, nullptr, 0);
-	}
+	// no-op, reserved.
+	//void FidelityFX::GenerateReactiveMask()
+	//{
+	//	auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	//	if (!rendererData) return;
+	//
+	//	auto* ctx = GetImmediateContext();
+	//	if (!ctx) return;
+	//
+	//	if (!colorOpaqueOnlyTexture || !colorOpaqueOnlyTexture->resource ||
+	//		!reactiveMaskTexture || !reactiveMaskTexture->resource)
+	//		return;
+	//
+	//	auto& state = RE::BSGraphics::State::GetSingleton();
+	//	auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+	//
+	//	ctx->OMSetRenderTargets(0, nullptr, nullptr);
+	//
+	//	auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[RenderTarget::kMainTemp].texture);
+	//	if (!rt4) return;
+	//
+	//	FfxResource opaqueResource;
+	//	FfxResourceFromDX11Texture(opaqueResource, colorOpaqueOnlyTexture->resource);
+	//
+	//	FfxResource fullResource;
+	//	FfxResourceFromDX11Texture(fullResource, rt4);
+	//
+	//	FfxResource reactiveResource;
+	//	FfxResourceFromDX11Texture(reactiveResource, reactiveMaskTexture->resource);
+	//
+	//	uint32_t renderW = static_cast<uint32_t>(static_cast<float>(state.screenWidth) * GetDynWidthRatio(rtMgr) + 0.5f);
+	//	uint32_t renderH = static_cast<uint32_t>(static_cast<float>(state.screenHeight) * GetDynHeightRatio(rtMgr) + 0.5f);
+	//
+	//	FfxFsr3GenerateReactiveDescription desc = {};
+	//	desc.commandList = reinterpret_cast<FfxCommandList>(ctx);
+	//	desc.colorOpaqueOnly = opaqueResource;
+	//	desc.colorPreUpscale = fullResource;
+	//	desc.outReactive = reactiveResource;
+	//	desc.renderSize = { renderW, renderH };
+	//	desc.flags = 8;
+	//	desc.scale = 0.5f;
+	//	desc.cutoffThreshold = 0.0f;
+	//
+	//	FfxErrorCode err = ffxFsr3ContextGenerateReactiveMask(&fsrContext, &desc);
+	//	if (err != FFX_OK) {
+	//		static bool maskLogged = false;
+	//		if (!maskLogged) {
+	//			maskLogged = true;
+	//			REX::LogError("GenerateReactiveMask failed error={}", static_cast<int>(err));
+	//		}
+	//	}
+	//
+	//	ID3D11Buffer* nullCB = nullptr;
+	//	ID3D11UnorderedAccessView* nullUAVs[8] = {};
+	//	ID3D11ShaderResourceView* nullSRVs[16] = {};
+	//	ctx->CSSetConstantBuffers(0, 1, &nullCB);
+	//	ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
+	//	ctx->CSSetShaderResources(0, 16, nullSRVs);
+	//	ctx->CSSetShader(nullptr, nullptr, 0);
+	//}
 }
 #endif

@@ -33,7 +33,8 @@ namespace F4R_Upscaling
 			uint32_t renderWidth,
 			uint32_t renderHeight);
 
-		void GenerateReactiveMask();
+		// no-op, reserved.
+		//void GenerateReactiveMask();
 	};
 }
 #endif

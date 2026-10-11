@@ -25,12 +25,13 @@ namespace
 		return GetOGAddr(a_ogRVA);
 	}
 
-#if F4R_HAS_FSR3
-	inline bool IsFSR3Method()
-	{
-		return Upscaling::GetSingleton().settings.iMethod == static_cast<int32_t>(Method::FSR3);
-	}
-#endif
+	// no-op, reserved.
+	//#if F4R_HAS_FSR3
+	//	inline bool IsFSR3Method()
+	//	{
+	//		return Upscaling::GetSingleton().settings.iMethod == static_cast<int32_t>(Method::FSR3);
+	//	}
+	//#endif
 
 	inline void LogHookResult(const char* a_name, std::uintptr_t a_original)
 	{
@@ -38,6 +39,15 @@ namespace
 			REX::LogDebug("{} installed", a_name);
 		else
 			REX::LogWarning("{} FAILED", a_name);
+	}
+
+	inline bool IsContainerMenuOpen()
+	{
+		static const RE::BSFixedString containerMenu("ContainerMenu");
+		if (auto* ui = RE::UI::GetSingleton()) {
+			return ui->IsMenuOpen(containerMenu).value_or(false);
+		}
+		return false;
 	}
 
 	using TAA_OffWhileUpscFunc = bool(ImageSpaceEffectTemporalAA*);
@@ -69,14 +79,10 @@ namespace
 		g_originalPostRender_UpscThenRestoreFullRes(a_this, a_p2);
 
 		auto& up = Upscaling::GetSingleton();
+		up.seamVisited = true;
 		up.Apply();
 
-		static const RE::BSFixedString containerMenu("ContainerMenu");
-		bool containerOpen = false;
-		if (auto* ui = RE::UI::GetSingleton()) {
-			containerOpen = ui->IsMenuOpen(containerMenu).value_or(false);
-		}
-		if (up.upsclEnabled && up.currentScale < 0.999f && !containerOpen) {
+		if (up.upsclEnabled && up.currentScale < 0.999f && !IsContainerMenuOpen()) {
 			up.BuildFlareDepth(*a_this);
 		}
 
@@ -106,58 +112,70 @@ namespace
 		g_originalSamplerState_RestoreMipBias(a_this);
 		Upscaling::GetSingleton().ResetSamplerStates();
 
-#if F4R_HAS_FSR3
-		auto& up = Upscaling::GetSingleton();
-		if (IsFSR3Method() && up.upsclEnabled && up.fidelityFX) {
-			up.fidelityFX->GenerateReactiveMask();
-		}
-#endif
+		// no-op, reserved.
+		//#if F4R_HAS_FSR3
+		//	auto& up = Upscaling::GetSingleton();
+		//	if (IsFSR3Method() && up.upsclEnabled && up.fidelityFX) {
+		//		up.fidelityFX->GenerateReactiveMask();
+		//	}
+		//#endif
 	}
 
-#if F4R_HAS_FSR3
-	using CaptureOpaque_ForReactiveMaskFunc = void(BSShaderAccumulator*);
-	CaptureOpaque_ForReactiveMaskFunc* g_originalCaptureOpaque_ForReactiveMask = nullptr;
+	// no-op, reserved.
+	//#if F4R_HAS_FSR3
+	//	using CaptureOpaque_ForReactiveMaskFunc = void(BSShaderAccumulator*);
+	//	CaptureOpaque_ForReactiveMaskFunc* g_originalCaptureOpaque_ForReactiveMask = nullptr;
+	//
+	//	void Hook_CaptureOpaque_ForReactiveMask(BSShaderAccumulator* a_this)
+	//	{
+	//		g_originalCaptureOpaque_ForReactiveMask(a_this);
+	//
+	//		if (!IsFSR3Method()) return;
+	//
+	//		auto& up = Upscaling::GetSingleton();
+	//		if (!up.upsclEnabled || !up.fidelityFX ||
+	//			!up.fidelityFX->colorOpaqueOnlyTexture ||
+	//			!up.fidelityFX->colorOpaqueOnlyTexture->resource)
+	//			return;
+	//
+	//		auto* rendererData = BSGraphics::RendererData::GetSingleton();
+	//		if (!rendererData) return;
+	//
+	//		auto* ctx = GetImmediateContext();
+	//		if (!ctx) return;
+	//
+	//		auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[F4R_Upscaling::RenderTarget::kMainTemp].texture);
+	//		if (!rt4) return;
+	//
+	//		ctx->CopyResource(up.fidelityFX->colorOpaqueOnlyTexture->resource, rt4);
+	//	}
+	//#endif
 
-	void Hook_CaptureOpaque_ForReactiveMask(BSShaderAccumulator* a_this)
-	{
-		g_originalCaptureOpaque_ForReactiveMask(a_this);
-
-		if (!IsFSR3Method()) return;
-
-		auto& up = Upscaling::GetSingleton();
-		if (!up.upsclEnabled || !up.fidelityFX ||
-			!up.fidelityFX->colorOpaqueOnlyTexture ||
-			!up.fidelityFX->colorOpaqueOnlyTexture->resource)
-			return;
-
-		auto* rendererData = BSGraphics::RendererData::GetSingleton();
-		if (!rendererData) return;
-
-		auto* ctx = GetImmediateContext();
-		if (!ctx) return;
-
-		auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[F4R_Upscaling::RenderTarget::kMainTemp].texture);
-		if (!rt4) return;
-
-		ctx->CopyResource(up.fidelityFX->colorOpaqueOnlyTexture->resource, rt4);
-	}
-#endif
-
-	using Effects_PreserveJitterFunc = void(RenderTargetManager*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
+	using Effects_PreserveJitterFunc = void(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 	Effects_PreserveJitterFunc* g_originalEffects_PreserveJitter = nullptr;
 
-	void Hook_Effects_PreserveJitter(RenderTargetManager* a_this, std::uint32_t a_p2, std::uint32_t a_p3, std::uint32_t a_p4, std::uint32_t a_p5)
+	void Hook_Effects_PreserveJitter(void* a_this, std::uint32_t a_p2, std::uint32_t a_p3, std::uint32_t a_p4, std::uint32_t a_p5)
 	{
 		auto& up = Upscaling::GetSingleton();
-		if (!up.upsclEnabled) {
-			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
-			return;
-		}
 		auto& state = State::GetSingleton();
 		float savedX = state.offsetX;
 		float savedY = state.offsetY;
 
-		g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
+		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() ||
+			IsContainerMenuOpen()) {
+			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
+			state.offsetX = savedX;
+			state.offsetY = savedY;
+			return;
+		}
+
+		g_originalEffects_PreserveJitter(a_this, 0, 3, a_p4, a_p5);
+
+		const bool entered = up.EnterFullExtentPass();
+		g_originalEffects_PreserveJitter(a_this, 4, 13, a_p4, a_p5);
+		if (entered) {
+			up.ExitFullExtentPass();
+		}
 
 		state.offsetX = savedX;
 		state.offsetY = savedY;
@@ -178,6 +196,7 @@ namespace
 		up.InvalidateFlareDepth();
 		up.RequestReset();
 		up.ReleaseHBAOCache();
+		up.ReleaseScaledTargets();
 	}
 
 	using ImageSpace_RestoreDynamicResolutionFunc = void(void*);
@@ -185,10 +204,36 @@ namespace
 
 	void Hook_ImageSpace_RestoreDynamicResolution(void* a_this)
 	{
-		g_originalImageSpace_RestoreDynamicResolution(a_this);
-
 		auto& rtMgr = RenderTargetManager::GetSingleton();
 		auto& up = Upscaling::GetSingleton();
+		const auto& state = State::GetSingleton();
+
+		if (up.scaledTargetsOverridden) {
+			REX::LogWarning("Leak frame={} full-extent pass still open: force-closing",
+				state.frameCount);
+			up.ExitFullExtentPass();
+		}
+		if (up.hbaoActive) {
+			REX::LogWarning("Leak frame={} HBAO pass still open: force-closing",
+				state.frameCount);
+			up.ExitHBAO();
+		}
+
+		const bool needUpscale = up.upsclEnabled && up.currentScale < 0.999f;
+		up.seamVisited = false;
+
+		g_originalImageSpace_RestoreDynamicResolution(a_this);
+
+		if (needUpscale && !up.seamVisited) {
+			REX::LogWarning(
+				"MissedSeam frame={} scale={:.3f} ratio={:.3f}/{:.3f}: upscale call site missed, recovering",
+				state.frameCount, up.currentScale,
+				GetDynWidthRatio(rtMgr), GetDynHeightRatio(rtMgr));
+			up.Apply();
+			up.savedWidthRatio = GetDynWidthRatio(rtMgr);
+			up.savedHeightRatio = GetDynHeightRatio(rtMgr);
+		}
+
 		GetDynWidthRatio(rtMgr) = up.savedWidthRatio;
 		GetDynHeightRatio(rtMgr) = up.savedHeightRatio;
 		GetDynResActivated(rtMgr) =
@@ -232,12 +277,11 @@ namespace
 	void Hook_HBAO_Render(void* a_this)
 	{
 		auto& up = Upscaling::GetSingleton();
-		if (up.EnterHBAO()) {
-			g_originalHBAO_Render(a_this);
-			up.ExitHBAO();
-			return;
-		}
+		const bool entered = up.EnterHBAO();
 		g_originalHBAO_Render(a_this);
+		if (entered) {
+			up.ExitHBAO();
+		}
 	}
 
 	using SSLRRaytracing_SkipInQualityModesFunc = void(RE::BSShader*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
@@ -329,14 +373,15 @@ namespace F4R_Upscaling
 			LogHookResult("SamplerState_RestoreMipBias", result);
 		}
 
-#if F4R_HAS_FSR3
-		{
-			auto addr = ResolveAddr(0x28568B0 + 0x1dc, 0x235FEB, 0x4C6);
-			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_CaptureOpaque_ForReactiveMask));
-			g_originalCaptureOpaque_ForReactiveMask = reinterpret_cast<CaptureOpaque_ForReactiveMaskFunc*>(result);
-			LogHookResult("CaptureOpaque_ForReactiveMask", result);
-		}
-#endif
+		// no-op, reserved.
+		//#if F4R_HAS_FSR3
+		//	{
+		//		auto addr = ResolveAddr(0x28568B0 + 0x1dc, 0x235FEB, 0x4C6);
+		//		auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_CaptureOpaque_ForReactiveMask));
+		//		g_originalCaptureOpaque_ForReactiveMask = reinterpret_cast<CaptureOpaque_ForReactiveMaskFunc*>(result);
+		//		LogHookResult("CaptureOpaque_ForReactiveMask", result);
+		//	}
+		//#endif
 
 		{
 			auto addr = ResolveAddr(0x2857110 + 0x9f, 0x235FF2, 0x83);

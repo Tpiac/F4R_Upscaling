@@ -91,14 +91,10 @@ namespace F4R_Upscaling
 
 #if F4R_HAS_MULTI
 		setEntry("iMethod", FormatInt(settings.iMethod),
-		    "; XeSS does not support changing iMethod & iQualityMode at runtime\n"
 			"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
 			"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off");
 #endif
 		setEntry("iQualityMode", FormatInt(settings.iQualityMode),
-#if F4R_HAS_XESS && !F4R_HAS_MULTI
-			"; iQualityMode is not changeable at runtime\n"
-#endif
 			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
 			"; ENB forces Native");
 		setEntry("fSharpness", FormatFloat(settings.fSharpness),

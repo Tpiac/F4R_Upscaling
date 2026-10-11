@@ -208,14 +208,6 @@ namespace F4R_Upscaling
 		else if (a_qualityMode == 2) quality = XESS_QUALITY_SETTING_BALANCED;
 		else if (a_qualityMode == 3) quality = XESS_QUALITY_SETTING_PERFORMANCE;
 
-		float inputScale = 1.0f;
-		{
-			auto& up = Upscaling::GetSingleton();
-			if (quality == XESS_QUALITY_SETTING_QUALITY) inputScale = up.settings.fQualityScale;
-			else if (quality == XESS_QUALITY_SETTING_BALANCED) inputScale = up.settings.fBalancedScale;
-			else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) inputScale = up.settings.fPerformanceScale;
-		}
-
 		xess_d3d12_init_params_t params{};
 		params.outputResolution = { a_width, a_height };
 		params.qualitySetting = quality;
@@ -234,13 +226,6 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		if (xessSetVelocityScale) {
-			float inputWidthF = static_cast<float>(a_width) * inputScale;
-			float inputHeightF = static_cast<float>(a_height) * inputScale;
-			xessSetVelocityScale(context, inputWidthF, inputHeightF);
-			velocityScaleX = inputWidthF;
-			velocityScaleY = inputHeightF;
-		}
 		if (xessSetJitterScale) {
 			xessSetJitterScale(context, 1.0f, 1.0f);
 		}
@@ -252,6 +237,25 @@ namespace F4R_Upscaling
 		initialized = true;
 		REX::LogDebug("XeSS context created ({}x{} {})", a_width, a_height, qname);
 		return true;
+	}
+
+	void XeSS::DestroyContext()
+	{
+		if (!context) return;
+
+		if (commandQueue && fence && fenceEvent && fenceValue > 0) {
+			if (SUCCEEDED(fence->SetEventOnCompletion(fenceValue, fenceEvent)) &&
+				SUCCEEDED(commandQueue->Signal(fence, fenceValue))) {
+				WaitForSingleObject(fenceEvent, INFINITE);
+				fenceValue++;
+			}
+		}
+
+		xessDestroyContext(context);
+		context = nullptr;
+		initialized = false;
+		velocityScaleX = 0.0f;
+		velocityScaleY = 0.0f;
 	}
 
 	bool XeSS::CreateSharedTexture(
@@ -434,6 +438,10 @@ namespace F4R_Upscaling
 		if (context4) { context4->Release(); context4 = nullptr; }
 		if (device5) { device5->Release(); device5 = nullptr; }
 		device11 = nullptr;
+		fenceValue = 0;
+		frameIndex = 0;
+		allocatorFenceValue[0] = 0;
+		allocatorFenceValue[1] = 0;
 	}
 }
 #endif

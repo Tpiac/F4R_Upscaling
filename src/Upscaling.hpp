@@ -44,7 +44,7 @@ namespace F4R_Upscaling
 		void InvalidateFlareDepth();
 		void PollRuntimeSettings();
 		void PollSettingsChanged();
-        void RequestReset();
+		void RequestReset();
 		void BuildFlareDepth(RE::BSGraphics::RenderTargetManager& a_rtMgr);
 		void PushFlareDepth();
 		void PopFlareDepth();
@@ -61,6 +61,12 @@ namespace F4R_Upscaling
 		bool EnterHBAO();
 		void ExitHBAO();
 		void InvokeHBAODynRes(bool a_dynamic);
+
+		void UpdateScaledTargets(float a_widthRatio, float a_heightRatio);
+		bool EnterFullExtentPass();
+		void ExitFullExtentPass();
+		[[nodiscard]] bool HasScaledTargets() const noexcept { return scaledTargetsValid; }
+		void ReleaseScaledTargets();
 
 		Settings settings;
 
@@ -130,6 +136,64 @@ namespace F4R_Upscaling
 		float cachedSamplerBias = 0.0f;
 		bool samplerCacheValid = false;
 
+		static constexpr std::uint32_t kProxyTargetCount = 25;
+		static constexpr std::uint32_t kProxyTargetMetaCount = 100;
+		static constexpr std::uint32_t kProxyTargets[kProxyTargetCount] = {
+			LogicalRenderTarget::kGbufferNormal,
+			LogicalRenderTarget::kGbufferMetadata,
+			LogicalRenderTarget::kGbufferMaterial,
+			LogicalRenderTarget::kAmbientOcclusion,
+			LogicalRenderTarget::kGbufferEmissive,
+			LogicalRenderTarget::kDiffuseBufferA,
+			LogicalRenderTarget::kSpecularBufferA,
+			LogicalRenderTarget::kAmbientOcclusionHalf,
+			LogicalRenderTarget::kMain,
+			LogicalRenderTarget::kSSLRBlurV,
+			LogicalRenderTarget::kDiffuseBufferB,
+			LogicalRenderTarget::kSpecularBufferB,
+			LogicalRenderTarget::kMainTemp,
+			LogicalRenderTarget::kMotionVectors,
+			LogicalRenderTarget::kRefractionNormal,
+			LogicalRenderTarget::kUIDownscaled,
+			LogicalRenderTarget::kUIDownscaledComposite,
+			LogicalRenderTarget::kGbufferAlbedo,
+			LogicalRenderTarget::kSSLRRayStart,
+			LogicalRenderTarget::kSSLRSurfaceDepth,
+			LogicalRenderTarget::kSSLRRayResult,
+			LogicalRenderTarget::kSSLRBlurH,
+			LogicalRenderTarget::kLuminanceDownscale,
+			LogicalRenderTarget::kMainVerticalBlur,
+			LogicalRenderTarget::kHdrImagespaceAux,
+		};
+		static constexpr std::uint32_t kProxyCopyInCount = 4;
+		static constexpr std::uint32_t kProxyCopyIn[kProxyCopyInCount] = {
+			LogicalRenderTarget::kRefractionNormal,
+			LogicalRenderTarget::kMainTemp,
+			LogicalRenderTarget::kMotionVectors,
+			LogicalRenderTarget::kHdrImagespaceAux,
+		};
+		static constexpr std::uint32_t kProxyCopyOut = LogicalRenderTarget::kMainTemp;
+
+		RE::BSGraphics::RenderTarget savedScaledTargets[kProxyTargetCount]{};
+		RE::BSGraphics::RenderTarget proxyScaledTargets[kProxyTargetCount]{};
+		RE::BSGraphics::RenderTargetProperties savedRenderTargetMeta[kProxyTargetMetaCount]{};
+		ID3D11RenderTargetView* savedPassRTV = nullptr;
+		ID3D11DepthStencilView* savedPassDSV = nullptr;
+		bool scaledTargetsOverridden = false;
+		bool scaledTargetsValid = false;
+		float scaledTargetWidthRatio = 0.0f;
+		float scaledTargetHeightRatio = 0.0f;
+		std::uint32_t scaledTargetScreenWidth = 0;
+		std::uint32_t scaledTargetScreenHeight = 0;
+		bool savedUseDynViewportAsDefault = true;
+
+		bool seamVisited = false;
+
+		std::unique_ptr<Texture2D> depthOverrideTexture;
+		ID3D11ComputeShader* depthOverrideShader = nullptr;
+		ID3D11Buffer* depthOverrideCB = nullptr;
+		ID3D11ShaderResourceView* depthOverrideBackup = nullptr;
+
 		float jitterX = 0.0f;
 		float jitterY = 0.0f;
 
@@ -143,6 +207,9 @@ namespace F4R_Upscaling
 
 	private:
 		void RestoreHBAOState();
+		bool PushFullExtentDepth();
+		void PopFullExtentDepth();
+		void ReleaseProxyTargets();
 
 		Upscaling() = default;
 
@@ -161,7 +228,9 @@ namespace F4R_Upscaling
 		uint32_t cachedHeight = 0;
 		DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
 		int32_t cachedMethod = -1;
+#if F4R_HAS_XESS
 		int32_t cachedQuality = -1;
+#endif
 #if F4R_HAS_FSR3
 		std::uint32_t fsrRetryFrame = 0;
 #endif

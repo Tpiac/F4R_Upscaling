@@ -62,7 +62,8 @@ namespace F4R_Upscaling
 
 		bool Load();
 		bool CreateD3D12(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
-		bool CreateContext(uint32_t a_width, uint32_t a_height, int a_qualityMode = 0);
+		bool CreateContext(uint32_t a_width, uint32_t a_height, int a_qualityMode);
+		void DestroyContext();
 		void TeardownD3D12();
 
 		bool CreateSharedTexture(

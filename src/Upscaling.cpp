@@ -100,6 +100,52 @@ namespace F4R_Upscaling
 			return texture;
 		}
 
+		std::unique_ptr<Texture2D> CreateR32Texture(
+			ID3D11Device* a_device,
+			uint32_t a_width,
+			uint32_t a_height,
+			const char* a_tag)
+		{
+			auto texture = std::make_unique<Texture2D>();
+			D3D11_TEXTURE2D_DESC texDesc = {};
+			texDesc.Width = a_width;
+			texDesc.Height = a_height;
+			texDesc.MipLevels = 1;
+			texDesc.ArraySize = 1;
+			texDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			texDesc.SampleDesc.Count = 1;
+			texDesc.Usage = D3D11_USAGE_DEFAULT;
+			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+			HRESULT hr = a_device->CreateTexture2D(&texDesc, nullptr, &texture->resource);
+			if (FAILED(hr)) {
+				REX::LogError("{}: CreateTexture2D({}x{}) failed hr=0x{:x}, will retry", a_tag, a_width, a_height, static_cast<uint32_t>(hr));
+				return nullptr;
+			}
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			hr = a_device->CreateShaderResourceView(texture->resource, &srvDesc, &texture->srv);
+			if (FAILED(hr)) {
+				REX::LogError("{}: CreateSRV failed hr=0x{:x}, will retry", a_tag, static_cast<uint32_t>(hr));
+				return nullptr;
+			}
+
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+			uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
+			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			uavDesc.Texture2D.MipSlice = 0;
+			hr = a_device->CreateUnorderedAccessView(texture->resource, &uavDesc, &texture->uav);
+			if (FAILED(hr)) {
+				REX::LogError("{}: CreateUAV failed hr=0x{:x}, will retry", a_tag, static_cast<uint32_t>(hr));
+				return nullptr;
+			}
+
+			return texture;
+		}
+
 		void RunComputePass(
 			ID3D11DeviceContext* a_ctx,
 			ID3D11ComputeShader* a_shader,
@@ -177,6 +223,7 @@ namespace F4R_Upscaling
 			}
 			return "Native";
 		}
+
 	}
 
 	struct MotionVectorConstants
@@ -253,6 +300,14 @@ namespace F4R_Upscaling
 			depthCopyShader->Release();
 			depthCopyShader = nullptr;
 		}
+		if (depthOverrideShader) {
+			depthOverrideShader->Release();
+			depthOverrideShader = nullptr;
+		}
+		if (depthOverrideCB) {
+			depthOverrideCB->Release();
+			depthOverrideCB = nullptr;
+		}
 		if (flareDepthShader) {
 			flareDepthShader->Release();
 			flareDepthShader = nullptr;
@@ -265,6 +320,20 @@ namespace F4R_Upscaling
 			flareDepthBackup->Release();
 			flareDepthBackup = nullptr;
 		}
+		if (savedPassRTV) {
+			savedPassRTV->Release();
+			savedPassRTV = nullptr;
+		}
+		if (savedPassDSV) {
+			savedPassDSV->Release();
+			savedPassDSV = nullptr;
+		}
+		if (depthOverrideBackup) {
+			depthOverrideBackup->Release();
+			depthOverrideBackup = nullptr;
+		}
+		ReleaseProxyTargets();
+		depthOverrideTexture.reset();
 	}
 
 	void Upscaling::LoadSettings()
@@ -303,11 +372,11 @@ namespace F4R_Upscaling
 			REX::LogInformation("Settings loaded: method=Off");
 		} else {
 #if F4R_HAS_DLSS
-			REX::LogInformation("Settings loaded: method={} quality={} sharpness={} mipBias={} reflex={}",
+			REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={} reflex={}",
 				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias,
 				settings.bEnableReflex ? "enabled" : "disabled");
 #else
-			REX::LogInformation("Settings loaded: method={} quality={} sharpness={} mipBias={}",
+			REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={}",
 				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias);
 #endif
 		}
@@ -360,12 +429,10 @@ namespace F4R_Upscaling
 			sharpnessChanged = true;
 		}
 
-		if (settings.iMethod != static_cast<int32_t>(Method::XeSS)) {
-			const int32_t qualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
-			if (qualityMode != settings.iQualityMode) {
-				settings.iQualityMode = qualityMode;
-				qualityChanged = true;
-			}
+		const int32_t qualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
+		if (qualityMode != settings.iQualityMode) {
+			settings.iQualityMode = qualityMode;
+			qualityChanged = true;
 		}
 
 		const float qualityScale = ClampScale(config.GetFloat("Settings", "fQualityScale", settings.fQualityScale), 0.60f, 0.67f);
@@ -425,7 +492,7 @@ namespace F4R_Upscaling
 		if (qualityChanged || sharpnessChanged || reflexChanged || mipBiasChanged || scalesChanged) {
 			std::string line = "Settings updated:";
 			if (qualityChanged) {
-				line += " quality=";
+				line += " mode=";
 				line += QualityName(settings.iQualityMode);
 			}
 			if (sharpnessChanged) {
@@ -565,6 +632,11 @@ namespace F4R_Upscaling
 		}
 		currentScale = desiredScale;
 
+		if (currentScale < 0.999f && startupFrameGuard < 5) {
+			desiredScale = 1.0f;
+			currentScale = 1.0f;
+		}
+
 		{
 			int32_t displayWidth = static_cast<int32_t>(state.screenWidth);
 			int32_t renderWidth = static_cast<int32_t>(static_cast<float>(displayWidth) * desiredScale);
@@ -625,6 +697,8 @@ namespace F4R_Upscaling
 			prevScale = desiredScale;
 		}
 
+		UpdateScaledTargets(GetDynWidthRatio(rtMgr), GetDynHeightRatio(rtMgr));
+
 		UpdateGameSettings();
 		CheckResources();
 		RefreshHBAOCache();
@@ -633,34 +707,47 @@ namespace F4R_Upscaling
 	void Upscaling::Apply()
 	{
 		const auto method = static_cast<Method>(settings.iMethod);
-		if (method == Method::Off) return;
+		if (method == Method::Off) {
+			return;
+		}
 
 		auto* main = RE::Main::GetSingleton();
 
 		if (main && main->gameActive) {
 			if (startupFrameGuard < 5) {
 				startupFrameGuard++;
+
 				return;
 			}
 		}
 
-		if (!upsclEnabled) return;
+		if (!upsclEnabled) {
+			return;
+		}
 
 		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rendererData) return;
+		if (!rendererData) {
+			return;
+		}
 
 		auto* ctx = GetImmediateContext();
-		if (!ctx) return;
+		if (!ctx) {
+			return;
+		}
 
 		auto& state = RE::BSGraphics::State::GetSingleton();
 		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
 
 		auto* backBufferSRV = reinterpret_cast<ID3D11ShaderResourceView*>(rendererData->renderTargets[RenderTarget::kFrameBuffer].srView);
-		if (!backBufferSRV) return;
+		if (!backBufferSRV) {
+			return;
+		}
 
 		ID3D11Resource* backBufferResource = nullptr;
 		backBufferSRV->GetResource(&backBufferResource);
-		if (!backBufferResource) return;
+		if (!backBufferResource) {
+			return;
+		}
 
 #if F4R_HAS_XESS
 		if (method == Method::XeSS) {
@@ -926,12 +1013,6 @@ namespace F4R_Upscaling
 		}
 		lastRequestedMethod = requested;
 
-		if (requested == static_cast<int32_t>(Method::XeSS)) {
-			REX::LogInformation("Settings updated: method=XeSS is not available at runtime, falling back to {}",
-				MethodName(settings.iMethod));
-			return;
-		}
-
 		settings.iMethod = requested;
 		if (requested == static_cast<int32_t>(Method::Off)) {
 			REX::LogInformation("Settings updated: method=Off");
@@ -958,6 +1039,7 @@ namespace F4R_Upscaling
 
 		InvalidateFlareDepth();
 		ReleaseHBAOCache();
+		ReleaseScaledTargets();
 		RestoreAASettings();
 
 		currentScale = 1.0f;
@@ -1101,38 +1183,8 @@ namespace F4R_Upscaling
 			}
 			flareDepthTexture.reset();
 			flareValid = false;
-			auto texture = std::make_unique<Texture2D>();
-			D3D11_TEXTURE2D_DESC texDesc = {};
-			texDesc.Width = a_width;
-			texDesc.Height = a_height;
-			texDesc.MipLevels = 1;
-			texDesc.ArraySize = 1;
-			texDesc.Format = DXGI_FORMAT_R32_FLOAT;
-			texDesc.SampleDesc.Count = 1;
-			texDesc.Usage = D3D11_USAGE_DEFAULT;
-			texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
-			HRESULT hr = a_device->CreateTexture2D(&texDesc, nullptr, &texture->resource);
-			if (FAILED(hr)) {
-				REX::LogError("EnsureFlareResources: CreateTexture2D({}x{}) failed hr=0x{:x}, will retry",
-					a_width, a_height, static_cast<uint32_t>(hr));
-				return;
-			}
-			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
-			srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-			srvDesc.Texture2D.MipLevels = 1;
-			hr = a_device->CreateShaderResourceView(texture->resource, &srvDesc, &texture->srv);
-			if (FAILED(hr)) {
-				REX::LogError("EnsureFlareResources: CreateSRV failed hr=0x{:x}, will retry", static_cast<uint32_t>(hr));
-				return;
-			}
-			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-			uavDesc.Format = DXGI_FORMAT_R32_FLOAT;
-			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-			uavDesc.Texture2D.MipSlice = 0;
-			hr = a_device->CreateUnorderedAccessView(texture->resource, &uavDesc, &texture->uav);
-			if (FAILED(hr)) {
-				REX::LogError("EnsureFlareResources: CreateUAV failed hr=0x{:x}, will retry", static_cast<uint32_t>(hr));
+			auto texture = CreateR32Texture(a_device, a_width, a_height, "EnsureFlareResources");
+			if (!texture) {
 				return;
 			}
 			flareDepthTexture = std::move(texture);
@@ -1244,6 +1296,438 @@ namespace F4R_Upscaling
 		flareDepthBackup = nullptr;
 	}
 
+	void Upscaling::ReleaseScaledTargets()
+	{
+		PopFullExtentDepth();
+		if (scaledTargetsOverridden) {
+			auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+			const auto* targetIDs = GetRenderTargetIDs(rtMgr);
+			if (rendererData && targetIDs) {
+				for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+					const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+					if (slot >= rendererData->renderTargets.size()) continue;
+					auto* proxyTexture = reinterpret_cast<ID3D11Texture2D*>(proxyScaledTargets[i].texture);
+					auto& live = rendererData->renderTargets[slot];
+					if (proxyTexture &&
+						live.texture == reinterpret_cast<REX::W32::ID3D11Texture2D*>(proxyTexture) &&
+						savedScaledTargets[i].texture) {
+						live = savedScaledTargets[i];
+					}
+				}
+				for (std::uint32_t i = 0; i < kProxyTargetMetaCount; ++i) {
+					rtMgr.renderTargetDataArray[i] = savedRenderTargetMeta[i];
+				}
+				GetSetUseDynViewportAsDefault()(&rtMgr, savedUseDynViewportAsDefault);
+			}
+			scaledTargetsOverridden = false;
+		}
+		if (auto* ctxRelease = GetImmediateContext()) {
+			if (savedPassRTV || savedPassDSV) {
+				ID3D11RenderTargetView* restoreRTV = savedPassRTV;
+				ctxRelease->OMSetRenderTargets(1, &restoreRTV, savedPassDSV);
+			}
+		}
+		if (savedPassRTV) {
+			savedPassRTV->Release();
+			savedPassRTV = nullptr;
+		}
+		if (savedPassDSV) {
+			savedPassDSV->Release();
+			savedPassDSV = nullptr;
+		}
+		ReleaseProxyTargets();
+		scaledTargetsValid = false;
+		scaledTargetWidthRatio = 0.0f;
+		scaledTargetHeightRatio = 0.0f;
+		scaledTargetScreenWidth = 0;
+		scaledTargetScreenHeight = 0;
+		depthOverrideTexture.reset();
+	}
+
+	void Upscaling::ReleaseProxyTargets()
+	{
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			auto& proxy = proxyScaledTargets[i];
+			if (proxy.uaView) reinterpret_cast<ID3D11UnorderedAccessView*>(proxy.uaView)->Release();
+			if (proxy.srView) reinterpret_cast<ID3D11ShaderResourceView*>(proxy.srView)->Release();
+			if (proxy.rtView) reinterpret_cast<ID3D11RenderTargetView*>(proxy.rtView)->Release();
+			if (proxy.texture) reinterpret_cast<ID3D11Texture2D*>(proxy.texture)->Release();
+			proxy = {};
+			savedScaledTargets[i] = {};
+		}
+	}
+
+	void Upscaling::UpdateScaledTargets(float a_widthRatio, float a_heightRatio)
+	{
+		if (a_widthRatio >= 0.999f && a_heightRatio >= 0.999f) {
+			if (scaledTargetsValid || scaledTargetsOverridden) {
+				ReleaseScaledTargets();
+			}
+			return;
+		}
+
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto& state = RE::BSGraphics::State::GetSingleton();
+		auto* device = GetRenderer();
+		auto* ctx = GetImmediateContext();
+		const auto* targetIDs = GetRenderTargetIDs(rtMgr);
+		if (!rendererData || !device || !targetIDs) {
+			return;
+		}
+
+		if (scaledTargetsValid && a_widthRatio == scaledTargetWidthRatio &&
+			a_heightRatio == scaledTargetHeightRatio &&
+			state.screenWidth == scaledTargetScreenWidth &&
+			state.screenHeight == scaledTargetScreenHeight) {
+			return;
+		}
+
+		ReleaseScaledTargets();
+
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+			if (slot >= rendererData->renderTargets.size()) {
+				ReleaseScaledTargets();
+				return;
+			}
+			auto& original = rendererData->renderTargets[slot];
+			if (!original.texture) {
+				ReleaseScaledTargets();
+				return;
+			}
+
+			D3D11_TEXTURE2D_DESC texDesc{};
+			reinterpret_cast<ID3D11Texture2D*>(original.texture)->GetDesc(&texDesc);
+			texDesc.Width = static_cast<std::uint32_t>(static_cast<float>(texDesc.Width) * a_widthRatio);
+			texDesc.Height = static_cast<std::uint32_t>(static_cast<float>(texDesc.Height) * a_heightRatio);
+			if (texDesc.Width < 1 || texDesc.Height < 1) {
+				ReleaseScaledTargets();
+				return;
+			}
+
+			D3D11_RENDER_TARGET_VIEW_DESC rtViewDesc{};
+			if (original.rtView) {
+				reinterpret_cast<ID3D11RenderTargetView*>(original.rtView)->GetDesc(&rtViewDesc);
+			}
+			D3D11_SHADER_RESOURCE_VIEW_DESC srViewDesc{};
+			if (original.srView) {
+				reinterpret_cast<ID3D11ShaderResourceView*>(original.srView)->GetDesc(&srViewDesc);
+			}
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uaViewDesc{};
+			if (original.uaView) {
+				reinterpret_cast<ID3D11UnorderedAccessView*>(original.uaView)->GetDesc(&uaViewDesc);
+			}
+
+			auto& proxy = proxyScaledTargets[i];
+			auto& saved = savedScaledTargets[i];
+			saved = original;
+			proxy = {};
+			proxy.copyTexture = original.copyTexture;
+			proxy.copySRView = original.copySRView;
+
+			if (FAILED(device->CreateTexture2D(&texDesc, nullptr, reinterpret_cast<ID3D11Texture2D**>(&proxy.texture)))) {
+				ReleaseScaledTargets();
+				return;
+			}
+			auto* proxyTexture = reinterpret_cast<ID3D11Texture2D*>(proxy.texture);
+			if (original.rtView &&
+				FAILED(device->CreateRenderTargetView(proxyTexture, &rtViewDesc,
+					reinterpret_cast<ID3D11RenderTargetView**>(&proxy.rtView)))) {
+				ReleaseScaledTargets();
+				return;
+			}
+			if (original.srView &&
+				FAILED(device->CreateShaderResourceView(proxyTexture, &srViewDesc,
+					reinterpret_cast<ID3D11ShaderResourceView**>(&proxy.srView)))) {
+				ReleaseScaledTargets();
+				return;
+			}
+			if (original.uaView &&
+				FAILED(device->CreateUnorderedAccessView(proxyTexture, &uaViewDesc,
+					reinterpret_cast<ID3D11UnorderedAccessView**>(&proxy.uaView)))) {
+				ReleaseScaledTargets();
+				return;
+			}
+		}
+
+		scaledTargetWidthRatio = a_widthRatio;
+		scaledTargetHeightRatio = a_heightRatio;
+		scaledTargetScreenWidth = state.screenWidth;
+		scaledTargetScreenHeight = state.screenHeight;
+		scaledTargetsValid = true;
+
+		if (ctx) {
+			static const float kClearZero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			const std::uint32_t slot = targetIDs[LogicalRenderTarget::kMain];
+			if (slot < rendererData->renderTargets.size()) {
+				auto* rtv = reinterpret_cast<ID3D11RenderTargetView*>(rendererData->renderTargets[slot].rtView);
+				if (rtv) {
+					ctx->ClearRenderTargetView(rtv, kClearZero);
+				}
+			}
+		}
+	}
+
+	bool Upscaling::PushFullExtentDepth()
+	{
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		auto* device = GetRenderer();
+		if (!rendererData || !ctx || !device) return false;
+
+		auto& state = RE::BSGraphics::State::GetSingleton();
+		const uint32_t screenW = state.screenWidth;
+		const uint32_t screenH = state.screenHeight;
+		if (screenW < 1 || screenH < 1) return false;
+
+		const uint32_t renderW = static_cast<uint32_t>(static_cast<float>(screenW) * scaledTargetWidthRatio);
+		const uint32_t renderH = static_cast<uint32_t>(static_cast<float>(screenH) * scaledTargetHeightRatio);
+		if (renderW < 1 || renderH < 1) return false;
+
+		bool recreateDepth = !depthOverrideTexture || !depthOverrideTexture->resource;
+		if (!recreateDepth) {
+			D3D11_TEXTURE2D_DESC liveDesc{};
+			depthOverrideTexture->resource->GetDesc(&liveDesc);
+			recreateDepth = (liveDesc.Width != screenW || liveDesc.Height != screenH);
+		}
+		if (recreateDepth) {
+			auto texture = CreateR32Texture(device, screenW, screenH, "PushFullExtentDepth");
+			if (!texture) {
+				return false;
+			}
+			depthOverrideTexture = std::move(texture);
+		}
+
+		if (!depthOverrideCB) {
+			depthOverrideCB = CreateConstantBuffer(device, "depthOverrideCB", sizeof(FlareDepthConstants));
+		}
+		if (!depthOverrideShader) {
+			depthOverrideShader = CreateComputeShaderFromBytecode(kDepthUpscale, kDepthUpscaleSize, device);
+		}
+		if (!depthOverrideCB || !depthOverrideShader) return false;
+
+		auto* depthSRV = reinterpret_cast<ID3D11ShaderResourceView*>(
+			rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
+		if (!depthSRV) return false;
+
+		FlareDepthConstants consts{};
+		consts.targetWidth = screenW;
+		consts.targetHeight = screenH;
+		consts.sourceWidth = renderW;
+		consts.sourceHeight = renderH;
+		ctx->UpdateSubresource(depthOverrideCB, 0, nullptr, &consts, 0, 0);
+
+		ID3D11RenderTargetView* prevRTV = nullptr;
+		ID3D11DepthStencilView* prevDSV = nullptr;
+		ctx->OMGetRenderTargets(1, &prevRTV, &prevDSV);
+		ctx->OMSetRenderTargets(0, nullptr, nullptr);
+
+		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
+		RunComputePass(ctx, depthOverrideShader, depthOverrideCB, srvs, 1, depthOverrideTexture->uav,
+			(screenW + 7) / 8, (screenH + 7) / 8);
+
+		ID3D11RenderTargetView* prevTargets[1] = { prevRTV };
+		ctx->OMSetRenderTargets(1, prevTargets, prevDSV);
+		if (prevRTV) prevRTV->Release();
+		if (prevDSV) prevDSV->Release();
+
+		if (depthOverrideBackup) {
+			PopFullExtentDepth();
+		}
+		depthOverrideBackup = depthSRV;
+		depthOverrideBackup->AddRef();
+		rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
+			reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(depthOverrideTexture->srv);
+		return true;
+	}
+
+	void Upscaling::PopFullExtentDepth()
+	{
+		if (!depthOverrideBackup) return;
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (rendererData) {
+			rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth =
+				reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(depthOverrideBackup);
+		}
+		depthOverrideBackup->Release();
+		depthOverrideBackup = nullptr;
+	}
+
+	bool Upscaling::EnterFullExtentPass()
+	{
+		if (!scaledTargetsValid || scaledTargetsOverridden) {
+			return false;
+		}
+
+		auto& a_rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		const auto* targetIDs = GetRenderTargetIDs(a_rtMgr);
+		if (!rendererData || !ctx || !targetIDs) {
+			return false;
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+			if (slot >= rendererData->renderTargets.size()) {
+				return false;
+			}
+			if (!savedScaledTargets[i].texture || !proxyScaledTargets[i].texture) {
+				return false;
+			}
+			if (rendererData->renderTargets[slot].texture !=
+				reinterpret_cast<REX::W32::ID3D11Texture2D*>(savedScaledTargets[i].texture)) {
+				ReleaseScaledTargets();
+				return false;
+			}
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+			rendererData->renderTargets[slot] = proxyScaledTargets[i];
+		}
+
+		static const float kClearZero[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			auto* rtv = reinterpret_cast<ID3D11RenderTargetView*>(proxyScaledTargets[i].rtView);
+			if (rtv) {
+				ctx->ClearRenderTargetView(rtv, kClearZero);
+			}
+		}
+
+		bool copyIn[kProxyTargetCount]{};
+		for (std::uint32_t c = 0; c < kProxyCopyInCount; ++c) {
+			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+				if (kProxyTargets[i] == kProxyCopyIn[c]) {
+					copyIn[i] = true;
+					break;
+				}
+			}
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			if (!copyIn[i]) continue;
+			auto* proxyTexture = reinterpret_cast<ID3D11Texture2D*>(proxyScaledTargets[i].texture);
+			D3D11_TEXTURE2D_DESC proxyDesc{};
+			proxyTexture->GetDesc(&proxyDesc);
+			D3D11_BOX box{};
+			box.right = static_cast<LONG>(proxyDesc.Width);
+			box.bottom = static_cast<LONG>(proxyDesc.Height);
+			box.back = 1;
+			ctx->CopySubresourceRegion(proxyTexture, 0, 0, 0, 0,
+				reinterpret_cast<ID3D11Texture2D*>(savedScaledTargets[i].texture), 0, &box);
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetMetaCount; ++i) {
+			savedRenderTargetMeta[i] = a_rtMgr.renderTargetDataArray[i];
+			a_rtMgr.renderTargetDataArray[i].width = static_cast<std::uint32_t>(
+				static_cast<float>(a_rtMgr.renderTargetDataArray[i].width) * scaledTargetWidthRatio);
+			a_rtMgr.renderTargetDataArray[i].height = static_cast<std::uint32_t>(
+				static_cast<float>(a_rtMgr.renderTargetDataArray[i].height) * scaledTargetHeightRatio);
+		}
+
+		ctx->OMGetRenderTargets(1, &savedPassRTV, &savedPassDSV);
+
+		ID3D11ShaderResourceView* boundSRVs[16] = {};
+		ctx->PSGetShaderResources(0, 16, boundSRVs);
+		for (int slot = 0; slot < 16; ++slot) {
+			if (!boundSRVs[slot]) continue;
+			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+				auto* originalSRV = reinterpret_cast<ID3D11ShaderResourceView*>(savedScaledTargets[i].srView);
+				auto* proxySRV = reinterpret_cast<ID3D11ShaderResourceView*>(proxyScaledTargets[i].srView);
+				if (originalSRV && proxySRV && boundSRVs[slot] == originalSRV) {
+					ctx->PSSetShaderResources(slot, 1, &proxySRV);
+					break;
+				}
+			}
+			boundSRVs[slot]->Release();
+		}
+
+		savedUseDynViewportAsDefault = GetUseDynViewportAsDefault(a_rtMgr);
+		GetDynWidthRatio(a_rtMgr) = 1.0f;
+		GetDynHeightRatio(a_rtMgr) = 1.0f;
+		GetDynResActivated(a_rtMgr) = false;
+		GetSetUseDynViewportAsDefault()(&a_rtMgr, false);
+		scaledTargetsOverridden = true;
+
+		PushFullExtentDepth();
+		return true;
+	}
+
+	void Upscaling::ExitFullExtentPass()
+	{
+		if (!scaledTargetsOverridden) return;
+		auto& a_rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		const auto* targetIDs = GetRenderTargetIDs(a_rtMgr);
+
+		PopFullExtentDepth();
+
+		if (ctx) {
+			ID3D11ShaderResourceView* boundSRVs[16] = {};
+			ctx->PSGetShaderResources(0, 16, boundSRVs);
+			for (int slot = 0; slot < 16; ++slot) {
+				if (!boundSRVs[slot]) continue;
+				for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+					auto* originalSRV = reinterpret_cast<ID3D11ShaderResourceView*>(savedScaledTargets[i].srView);
+					auto* proxySRV = reinterpret_cast<ID3D11ShaderResourceView*>(proxyScaledTargets[i].srView);
+					if (originalSRV && proxySRV && boundSRVs[slot] == proxySRV) {
+						ctx->PSSetShaderResources(slot, 1, &originalSRV);
+						break;
+					}
+				}
+				boundSRVs[slot]->Release();
+			}
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetMetaCount; ++i) {
+			a_rtMgr.renderTargetDataArray[i] = savedRenderTargetMeta[i];
+		}
+
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		if (rendererData && targetIDs) {
+			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+				const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+				if (slot >= rendererData->renderTargets.size()) continue;
+				if (kProxyTargets[i] == kProxyCopyOut && ctx) {
+					auto* proxyTexture = reinterpret_cast<ID3D11Texture2D*>(proxyScaledTargets[i].texture);
+					auto* originalTexture = reinterpret_cast<ID3D11Texture2D*>(savedScaledTargets[i].texture);
+					if (proxyTexture && originalTexture) {
+						D3D11_TEXTURE2D_DESC proxyDesc{};
+						proxyTexture->GetDesc(&proxyDesc);
+						D3D11_BOX box{};
+						box.right = static_cast<LONG>(proxyDesc.Width);
+						box.bottom = static_cast<LONG>(proxyDesc.Height);
+						box.back = 1;
+						ctx->CopySubresourceRegion(originalTexture, 0, 0, 0, 0, proxyTexture, 0, &box);
+					}
+				}
+				rendererData->renderTargets[slot] = savedScaledTargets[i];
+			}
+		}
+
+		GetDynWidthRatio(a_rtMgr) = scaledTargetWidthRatio;
+		GetDynHeightRatio(a_rtMgr) = scaledTargetHeightRatio;
+		GetDynResActivated(a_rtMgr) = (scaledTargetWidthRatio != 1.0f || scaledTargetHeightRatio != 1.0f);
+		GetSetUseDynViewportAsDefault()(&a_rtMgr, savedUseDynViewportAsDefault);
+
+		if (ctx && (savedPassRTV || savedPassDSV)) {
+			ID3D11RenderTargetView* restoreRTV = savedPassRTV;
+			ctx->OMSetRenderTargets(1, &restoreRTV, savedPassDSV);
+		}
+		if (savedPassRTV) {
+			savedPassRTV->Release();
+			savedPassRTV = nullptr;
+		}
+		if (savedPassDSV) {
+			savedPassDSV->Release();
+			savedPassDSV = nullptr;
+		}
+		scaledTargetsOverridden = false;
+	}
+
 	void Upscaling::CheckResources()
 	{
 		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
@@ -1283,9 +1767,10 @@ namespace F4R_Upscaling
 #endif
 
 		if (resourcesCreated) {
-			const bool qualityAffectsResources = (settings.iMethod == static_cast<int32_t>(Method::XeSS));
-			const bool qualityMatch = !qualityAffectsResources || (cachedQuality == settings.iQualityMode);
-			if (cachedWidth == state.screenWidth && cachedHeight == state.screenHeight && cachedFormat == backBufferFormat && cachedMethod == settings.iMethod && qualityMatch && !fsrNeedsRetry) {
+			const bool outputChanged = cachedWidth != state.screenWidth ||
+				cachedHeight != state.screenHeight || cachedFormat != backBufferFormat;
+
+			if (!outputChanged && cachedMethod == settings.iMethod && !fsrNeedsRetry) {
 				if (currentScale < 0.999f) {
 					if (!flareDepthTexture || !flareDepthTexture->resource ||
 						!flareDepthShader || !flareDepthCB || !flareValid) {
@@ -1298,9 +1783,9 @@ namespace F4R_Upscaling
 				EnsureMotionVectorFixResources(device);
 				return;
 			}
-			REX::LogDebug("CheckResources: method/resolution/format/quality changed {}x{} fmt{} method{} q{} -> {}x{} fmt{} method{} q{}: recreating",
-				cachedWidth, cachedHeight, static_cast<int>(cachedFormat), cachedMethod, cachedQuality,
-				state.screenWidth, state.screenHeight, static_cast<int>(backBufferFormat), settings.iMethod, settings.iQualityMode);
+			REX::LogDebug("CheckResources: {} changed {}x{} fmt{} method{} -> {}x{} fmt{} method{}: recreating",
+				outputChanged ? "output" : "method", cachedWidth, cachedHeight, static_cast<int>(cachedFormat), cachedMethod,
+				state.screenWidth, state.screenHeight, static_cast<int>(backBufferFormat), settings.iMethod);
 			motionVectorTexture.reset();
 			tempTexture.reset();
 			workingTexture.reset();
@@ -1316,10 +1801,8 @@ namespace F4R_Upscaling
 			{
 				auto& xess = XeSS::GetSingleton();
 				xess.disabled = false;
-				if (xess.context && xess.xessDestroyContext) {
-					xess.xessDestroyContext(xess.context);
-					xess.context = nullptr;
-					xess.initialized = false;
+				if (outputChanged) {
+					xess.DestroyContext();
 				}
 			}
 #endif
@@ -1502,6 +1985,7 @@ namespace F4R_Upscaling
 					xess.disabled = true;
 					xessRetryFrame = state.frameCount;
 				}
+				xess.DestroyContext();
 				xess.TeardownD3D12();
 				upsclEnabled = false;
 				currentScale = 1.0f;
@@ -1589,7 +2073,7 @@ namespace F4R_Upscaling
 
 			EnsureMotionVectorFixResources(device);
 
-			int xessQualityMode = settings.iQualityMode;
+			int32_t xessQualityMode = settings.iQualityMode;
 			if (g_enbLoaded && xessQualityMode >= 1 && xessQualityMode <= 3) {
 				xessQualityMode = 0;
 				REX::LogInformation("ENB forces Native for XeSS");
@@ -1597,10 +2081,17 @@ namespace F4R_Upscaling
 
 			if (!xess.initialized) {
 				if (!xess.CreateContext(width, height, xessQualityMode)) {
-					REX::LogError("CheckResources: CreateContext failed");
 					fallbackNative("context creation failed");
 					return;
 				}
+				cachedQuality = xessQualityMode;
+			} else if (cachedQuality != xessQualityMode) {
+				xess.DestroyContext();
+				if (!xess.CreateContext(width, height, xessQualityMode)) {
+					fallbackNative("context creation failed");
+					return;
+				}
+				cachedQuality = xessQualityMode;
 			}
 		}
 #endif
@@ -1617,7 +2108,6 @@ namespace F4R_Upscaling
 		cachedHeight = state.screenHeight;
 		cachedFormat = backBufferFormat;
 		cachedMethod = settings.iMethod;
-		cachedQuality = settings.iQualityMode;
 
 		if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3 &&
 			!(method == Method::DLSS && g_enbLoaded)) {

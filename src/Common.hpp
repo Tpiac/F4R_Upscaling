@@ -89,6 +89,63 @@ namespace F4R_Upscaling
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
 
+	inline bool& GetUseDynViewportAsDefault(RE::BSGraphics::RenderTargetManager& a_rtMgr)
+	{
+		static const std::ptrdiff_t OG_OFFSET = 0xFA7;
+		static const std::ptrdiff_t AE_OFFSET = 0xFD7;
+		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
+		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
+	}
+
+	inline const std::uint32_t* GetRenderTargetIDs(RE::BSGraphics::RenderTargetManager& a_rtMgr)
+	{
+		static const std::ptrdiff_t OG_OFFSET = 0xDC4;
+		static const std::ptrdiff_t AE_OFFSET = 0xDF4;
+		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
+		return reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
+	}
+
+	namespace LogicalRenderTarget
+	{
+		enum : std::uint32_t
+		{
+			kMainTemp = 1,
+			kMain = 2,
+			kSSLRRayStart = 4,
+			kSSLRRayResult = 5,
+			kSSLRBlurH = 6,
+			kSSLRBlurV = 7,
+			kSSLRSurfaceDepth = 8,
+			kRefractionNormal = 14,
+			kHdrImagespaceAux = 15,
+			kUIDownscaled = 24,
+			kUIDownscaledComposite = 25,
+			kGbufferAlbedo = 26,
+			kGbufferNormal = 27,
+			kGbufferMetadata = 29,
+			kGbufferMaterial = 30,
+			kGbufferEmissive = 31,
+			kMotionVectors = 32,
+			kDiffuseBufferA = 33,
+			kSpecularBufferA = 34,
+			kDiffuseBufferB = 35,
+			kSpecularBufferB = 36,
+			kAmbientOcclusion = 37,
+			kAmbientOcclusionHalf = 39,
+			kMainVerticalBlur = 68,
+			kLuminanceDownscale = 70,
+		};
+	}
+
+	using SetUseDynViewportAsDefaultFunc = void(RE::BSGraphics::RenderTargetManager*, bool);
+
+	inline SetUseDynViewportAsDefaultFunc* GetSetUseDynViewportAsDefault()
+	{
+		const std::uintptr_t id = IsOG() ? 676851ull : 2277194ull;
+		return reinterpret_cast<SetUseDynViewportAsDefaultFunc*>(
+			REL::Relocation{ REL::Id<>{ id } }.GetAddress());
+	}
+
 	namespace RenderTarget
 	{
 		enum : std::uint32_t
@@ -101,8 +158,8 @@ namespace F4R_Upscaling
 			kSSRDirection = 10,
 			kSSRMask = 11,
 			kGbufferNormal = 20,
-			kMotionVectors = 29,
 			kSSAOFinal = 25,
+			kMotionVectors = 29,
 		};
 	}
 
