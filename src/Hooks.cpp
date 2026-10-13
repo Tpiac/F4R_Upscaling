@@ -25,14 +25,6 @@ namespace
 		return GetOGAddr(a_ogRVA);
 	}
 
-	// no-op, reserved.
-	//#if F4R_HAS_FSR3
-	//	inline bool IsFSR3Method()
-	//	{
-	//		return Upscaling::GetSingleton().settings.iMethod == static_cast<int32_t>(Method::FSR3);
-	//	}
-	//#endif
-
 	inline void LogHookResult(const char* a_name, std::uintptr_t a_original)
 	{
 		if (a_original)
@@ -111,45 +103,57 @@ namespace
 		Upscaling::GetSingleton().OverrideSamplerStates();
 		g_originalSamplerState_RestoreMipBias(a_this);
 		Upscaling::GetSingleton().ResetSamplerStates();
-
-		// no-op, reserved.
-		//#if F4R_HAS_FSR3
-		//	auto& up = Upscaling::GetSingleton();
-		//	if (IsFSR3Method() && up.upsclEnabled && up.fidelityFX) {
-		//		up.fidelityFX->GenerateReactiveMask();
-		//	}
-		//#endif
 	}
 
-	// no-op, reserved.
-	//#if F4R_HAS_FSR3
-	//	using CaptureOpaque_ForReactiveMaskFunc = void(BSShaderAccumulator*);
-	//	CaptureOpaque_ForReactiveMaskFunc* g_originalCaptureOpaque_ForReactiveMask = nullptr;
-	//
-	//	void Hook_CaptureOpaque_ForReactiveMask(BSShaderAccumulator* a_this)
-	//	{
-	//		g_originalCaptureOpaque_ForReactiveMask(a_this);
-	//
-	//		if (!IsFSR3Method()) return;
-	//
-	//		auto& up = Upscaling::GetSingleton();
-	//		if (!up.upsclEnabled || !up.fidelityFX ||
-	//			!up.fidelityFX->colorOpaqueOnlyTexture ||
-	//			!up.fidelityFX->colorOpaqueOnlyTexture->resource)
-	//			return;
-	//
-	//		auto* rendererData = BSGraphics::RendererData::GetSingleton();
-	//		if (!rendererData) return;
-	//
-	//		auto* ctx = GetImmediateContext();
-	//		if (!ctx) return;
-	//
-	//		auto* rt4 = reinterpret_cast<ID3D11Texture2D*>(rendererData->renderTargets[F4R_Upscaling::RenderTarget::kMainTemp].texture);
-	//		if (!rt4) return;
-	//
-	//		ctx->CopyResource(up.fidelityFX->colorOpaqueOnlyTexture->resource, rt4);
-	//	}
-	//#endif
+	struct OutlineGate
+	{
+		bool windowActive = false;
+		std::uint32_t fx12Stable = 0;
+	};
+
+	OutlineGate g_outlineGate;
+
+	inline bool OutlineWindowActive(OutlineGate& a_gate, std::uint32_t a_frame)
+	{
+		bool vats = false;
+		bool workshop = false;
+		if (auto* ui = RE::UI::GetSingleton()) {
+			static const RE::BSFixedString vatsMenu("VATSMenu");
+			static const RE::BSFixedString workshopMenu("WorkshopMenu");
+			vats = ui->IsMenuOpen(vatsMenu).value_or(false);
+			workshop = ui->IsMenuOpen(workshopMenu).value_or(false);
+		}
+
+		constexpr auto fxVatsTarget = static_cast<std::size_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_VATS_TARGET);
+		constexpr std::uint32_t kVatsStableFrames = 20;
+
+		bool active = false;
+		if (vats) {
+			bool fx12 = false;
+			if (auto* ism = RE::ImageSpaceManager::GetSingleton()) {
+				if (ism->effectList.size() > fxVatsTarget && ism->effectList[fxVatsTarget]) {
+					fx12 = ism->effectList[fxVatsTarget]->isActive;
+				}
+			}
+			a_gate.fx12Stable = fx12 ?
+				(a_gate.fx12Stable < kVatsStableFrames ? a_gate.fx12Stable + 1 : kVatsStableFrames) :
+				0;
+			active = a_gate.fx12Stable >= kVatsStableFrames;
+		} else {
+			a_gate.fx12Stable = 0;
+			active = workshop;
+		}
+
+		if (active != a_gate.windowActive) {
+			a_gate.windowActive = active;
+			REX::LogDebug(
+				"Menu frame={}: full-extent window {} (vats={} workshop={} stable={}/{})",
+				a_frame, active ? "active" : "suppressed",
+				vats ? 1 : 0, workshop ? 1 : 0, a_gate.fx12Stable, kVatsStableFrames);
+		}
+		return active;
+	}
 
 	using Effects_PreserveJitterFunc = void(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 	Effects_PreserveJitterFunc* g_originalEffects_PreserveJitter = nullptr;
@@ -162,7 +166,7 @@ namespace
 		float savedY = state.offsetY;
 
 		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() ||
-			IsContainerMenuOpen()) {
+			IsContainerMenuOpen() || !OutlineWindowActive(g_outlineGate, state.frameCount)) {
 			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
 			state.offsetX = savedX;
 			state.offsetY = savedY;
@@ -372,16 +376,6 @@ namespace F4R_Upscaling
 			g_originalSamplerState_RestoreMipBias = reinterpret_cast<SamplerState_RestoreMipBiasFunc*>(result);
 			LogHookResult("SamplerState_RestoreMipBias", result);
 		}
-
-		// no-op, reserved.
-		//#if F4R_HAS_FSR3
-		//	{
-		//		auto addr = ResolveAddr(0x28568B0 + 0x1dc, 0x235FEB, 0x4C6);
-		//		auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_CaptureOpaque_ForReactiveMask));
-		//		g_originalCaptureOpaque_ForReactiveMask = reinterpret_cast<CaptureOpaque_ForReactiveMaskFunc*>(result);
-		//		LogHookResult("CaptureOpaque_ForReactiveMask", result);
-		//	}
-		//#endif
 
 		{
 			auto addr = ResolveAddr(0x2857110 + 0x9f, 0x235FF2, 0x83);

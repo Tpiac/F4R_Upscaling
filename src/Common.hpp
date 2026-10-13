@@ -187,7 +187,7 @@ namespace F4R_Upscaling
 		float fAnisotropicMipBias = -0.0001f;
 		int32_t iQualityMode = 0;
 
-		float fQualityScale = 0.65f;
+		float fQualityScale = 0.648f;
 		float fBalancedScale = 0.59f;
 		float fPerformanceScale = 0.5f;
 

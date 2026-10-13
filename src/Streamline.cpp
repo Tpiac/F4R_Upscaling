@@ -238,9 +238,6 @@ namespace F4R_Upscaling
 		constants.reset = Upscaling::GetSingleton().resetHistory ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 		constants.jitterOffset = { -a_jitterX, -a_jitterY };
 		constants.mvecScale = { 1.0f, 1.0f };
-		constants.motionVectorsInvalidValue = 1.1754944e-38f;
-		constants.orthographicProjection = sl::Boolean::eFalse;
-		constants.motionVectorsDilated = sl::Boolean::eFalse;
 		constants.motionVectorsJittered = sl::Boolean::eFalse;
 
 		if (!AcquireFrameToken()) {

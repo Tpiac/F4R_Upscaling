@@ -11,8 +11,6 @@ namespace F4R_Upscaling
 		FfxFsr3Context fsrContext{};
 		void* fsrScratchBuffer = nullptr;
 		FfxInterface backendInterface{};
-		std::unique_ptr<Texture2D> colorOpaqueOnlyTexture;
-		std::unique_ptr<Texture2D> reactiveMaskTexture;
 
 		FidelityFX() = default;
 		~FidelityFX();
@@ -32,9 +30,6 @@ namespace F4R_Upscaling
 			float jitterY,
 			uint32_t renderWidth,
 			uint32_t renderHeight);
-
-		// no-op, reserved.
-		//void GenerateReactiveMask();
 	};
 }
 #endif
