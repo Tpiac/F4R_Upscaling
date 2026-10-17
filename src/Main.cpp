@@ -125,7 +125,6 @@ namespace
 			{
 				F4R_Upscaling::Upscaling::GetSingleton().InvalidateFlareDepth();
 				F4R_Upscaling::Upscaling::GetSingleton().RequestReset();
-				F4R_Upscaling::Upscaling::GetSingleton().PollSettingsChanged();
 				break;
 			}
 		default:
@@ -187,9 +186,7 @@ namespace F4R_Upscaling
 			reinterpret_cast<uintptr_t>(&Hook_D3D11CreateDeviceAndSwapChain));
 		g_originalD3D11CreateDeviceAndSwapChain = reinterpret_cast<D3D11CreateDeviceAndSwapChainFunc>(result);
 
-		if (result)
-			REX::LogDebug("D3D11CreateDeviceAndSwapChain IAT hook installed");
-		else
+		if (!result)
 			REX::LogWarning("D3D11CreateDeviceAndSwapChain IAT hook FAILED");
 	}
 }

@@ -381,21 +381,7 @@ namespace F4R_Upscaling
 #endif
 		}
 
-		{
-			const std::uint64_t writeTime = GetFileWriteTime(config.Path());
-			if (writeTime != 0) {
-				methodIniHasTime = true;
-				methodIniWriteTime = writeTime;
-			}
-		}
-
 		PollRuntimeSettings();
-	}
-
-	void Upscaling::PollSettingsChanged()
-	{
-		if (!Config::GetSingleton().IsLoaded()) return;
-		pendingSettingsRefresh = true;
 	}
 
 	void Upscaling::PollRuntimeSettings()
@@ -414,6 +400,32 @@ namespace F4R_Upscaling
 		settingsIniWriteTime = writeTime;
 
 		if (!config.Reload()) return;
+
+#if F4R_HAS_MULTI
+		const int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
+		if (requested >= static_cast<int32_t>(Method::Off) && requested <= static_cast<int32_t>(Method::XeSS) &&
+			requested != settings.iMethod) {
+			dlssUnsupportedLogged = false;
+#if F4R_HAS_DLSS
+			auto& streamline = Streamline::GetSingleton();
+			if (requested == static_cast<int32_t>(Method::DLSS) && streamline.initialized && !streamline.featureDLSS) {
+				settings.iMethod = lastWorkingMethod;
+				REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
+				dlssUnsupportedLogged = true;
+				resetHistory = true;
+			} else
+#endif
+			{
+				settings.iMethod = requested;
+				if (requested == static_cast<int32_t>(Method::Off)) {
+					REX::LogInformation("Settings updated: method=Off");
+				} else {
+					REX::LogInformation("Settings updated: method={}", MethodName(requested));
+				}
+				resetHistory = true;
+			}
+		}
+#endif
 
 		bool qualityChanged = false;
 		bool sharpnessChanged = false;
@@ -535,15 +547,12 @@ namespace F4R_Upscaling
 		}
 		initialized = true;
 
-		REX::LogDebug("Init called");
-
 		auto* branchPool = F4SE::GetTrampolineInterface()->AllocateFromBranchPool(256);
 		REL::GetTrampoline()->Init(branchPool, 256);
 
 		InstallHooks();
 		UpdateGameSettings();
 
-		REX::LogDebug("Init complete");
 	}
 
 	bool IsMenuBlocked()
@@ -564,9 +573,14 @@ namespace F4R_Upscaling
 
 	void Upscaling::Update()
 	{
-		PollMethodChange();
+		auto* main = RE::Main::GetSingleton();
+		const bool prevEnabled = wasUpsclEnabled;
+		const bool shouldBlock = IsMenuBlocked();
+		if (main && main->gameActive && !shouldBlock) {
+			PollRuntimeSettings();
+		}
 
-		const auto method = static_cast<Method>(settings.iMethod);
+		auto method = static_cast<Method>(settings.iMethod);
 		upsclEnabled = false;
 		if (method == Method::Off) {
 			if (wasUpsclEnabled || fxaaStateSaved || taaFlagSaved || samplerBiasActive) {
@@ -579,7 +593,20 @@ namespace F4R_Upscaling
 #if F4R_HAS_DLSS
 		if (method == Method::DLSS) {
 			auto& streamline = Streamline::GetSingleton();
-			upsclEnabled = streamline.initialized && streamline.featureDLSS;
+			if (streamline.initialized && !streamline.featureDLSS) {
+				if (!dlssUnsupportedLogged) {
+					settings.iMethod = lastWorkingMethod;
+					REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
+					dlssUnsupportedLogged = true;
+					method = static_cast<Method>(settings.iMethod);
+					resetHistory = true;
+				}
+			} else {
+				dlssUnsupportedLogged = false;
+			}
+			if (method == Method::DLSS) {
+				upsclEnabled = streamline.initialized && streamline.featureDLSS;
+			}
 		}
 #endif
 #if F4R_HAS_FSR3
@@ -593,9 +620,10 @@ namespace F4R_Upscaling
 		}
 #endif
 
-		auto* main = RE::Main::GetSingleton();
-		const bool prevEnabled = wasUpsclEnabled;
-		const bool shouldBlock = IsMenuBlocked();
+		if (method != Method::Off && upsclEnabled) {
+			lastWorkingMethod = static_cast<int32_t>(method);
+		}
+
 		if (main && (!main->gameActive || shouldBlock)) {
 			upsclEnabled = false;
 		}
@@ -614,15 +642,6 @@ namespace F4R_Upscaling
 
 		auto& state = RE::BSGraphics::State::GetSingleton();
 		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
-
-		if (pendingSettingsRefresh && main && main->gameActive && !shouldBlock) {
-			pendingSettingsRefresh = false;
-			PollRuntimeSettings();
-		}
-
-		if ((state.frameCount % 60) == 0 && main && main->gameActive && !shouldBlock) {
-			PollRuntimeSettings();
-		}
 
 		float desiredScale = 1.0f;
 		if (upsclEnabled && !g_enbLoaded) {
@@ -981,48 +1000,6 @@ namespace F4R_Upscaling
 		}
 	}
 
-	void Upscaling::PollMethodChange()
-	{
-#if F4R_HAS_MULTI
-		auto& config = Config::GetSingleton();
-		if (!config.IsLoaded()) return;
-
-		const std::uint64_t writeTime = GetFileWriteTime(config.Path());
-		if (writeTime == 0) return;
-		if (!methodIniHasTime) {
-			methodIniHasTime = true;
-			methodIniWriteTime = writeTime;
-			return;
-		}
-		if (writeTime == methodIniWriteTime) return;
-		methodIniWriteTime = writeTime;
-
-		if (!config.Reload()) return;
-
-		const int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
-		if (requested < static_cast<int32_t>(Method::Off) || requested > static_cast<int32_t>(Method::XeSS)) {
-			return;
-		}
-
-		if (requested == settings.iMethod) {
-			lastRequestedMethod = requested;
-			return;
-		}
-		if (requested == lastRequestedMethod) {
-			return;
-		}
-		lastRequestedMethod = requested;
-
-		settings.iMethod = requested;
-		if (requested == static_cast<int32_t>(Method::Off)) {
-			REX::LogInformation("Settings updated: method=Off");
-		} else {
-			REX::LogInformation("Settings updated: method={}", MethodName(requested));
-			resetHistory = true;
-		}
-#endif
-	}
-
 	void Upscaling::ReturnToVanilla()
 	{
 		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
@@ -1045,7 +1022,6 @@ namespace F4R_Upscaling
 		currentScale = 1.0f;
 		wasUpsclEnabled = false;
 		resetHistory = true;
-		REX::LogDebug("Vanilla restored: dyn-res, jitter, sampler bias, AA reverted");
 	}
 
 	void Upscaling::RefreshSamplerCache(SamplerStates* a_states, float a_bias)
@@ -1760,17 +1736,11 @@ namespace F4R_Upscaling
 			}
 		}
 
-		bool fsrNeedsRetry = false;
-#if F4R_HAS_FSR3
-		fsrNeedsRetry = (settings.iMethod == static_cast<int32_t>(Method::FSR3)) && !fidelityFX &&
-			(state.frameCount - fsrRetryFrame >= 600);
-#endif
-
 		if (resourcesCreated) {
 			const bool outputChanged = cachedWidth != state.screenWidth ||
 				cachedHeight != state.screenHeight || cachedFormat != backBufferFormat;
 
-			if (!outputChanged && cachedMethod == settings.iMethod && !fsrNeedsRetry) {
+			if (!outputChanged && cachedMethod == settings.iMethod) {
 				if (currentScale < 0.999f) {
 					if (!flareDepthTexture || !flareDepthTexture->resource ||
 						!flareDepthShader || !flareDepthCB || !flareValid) {
@@ -1783,9 +1753,6 @@ namespace F4R_Upscaling
 				EnsureMotionVectorFixResources(device);
 				return;
 			}
-			REX::LogDebug("CheckResources: {} changed {}x{} fmt{} method{} -> {}x{} fmt{} method{}: recreating",
-				outputChanged ? "output" : "method", cachedWidth, cachedHeight, static_cast<int>(cachedFormat), cachedMethod,
-				state.screenWidth, state.screenHeight, static_cast<int>(backBufferFormat), settings.iMethod);
 			motionVectorTexture.reset();
 			tempTexture.reset();
 			workingTexture.reset();
@@ -1823,8 +1790,6 @@ namespace F4R_Upscaling
 
 		const auto method = static_cast<Method>(settings.iMethod);
 
-		REX::LogDebug("CheckResources: creating resources (method={})", settings.iMethod);
-
 #if F4R_HAS_FSR3
 		if (method == Method::FSR3 && !workingTexture) {
 			workingTexture = std::make_unique<Texture2D>();
@@ -1843,7 +1808,6 @@ namespace F4R_Upscaling
 				workingTexture.reset();
 				return;
 			}
-			REX::LogDebug("workingTexture {}x{} fmt={}", texDesc.Width, texDesc.Height, static_cast<int>(backBufferFormat));
 		}
 #endif
 
@@ -1873,8 +1837,6 @@ namespace F4R_Upscaling
 			hr = device->CreateShaderResourceView(workingTexture->resource, &srvDesc, &workingTexture->srv);
 			if (FAILED(hr)) {
 				REX::LogError("CreateShaderResourceView(workingTexture) failed hr=0x{:x}", static_cast<uint32_t>(hr));
-			} else {
-				REX::LogDebug("workingTexture {}x{} fmt={}", texDesc.Width, texDesc.Height, static_cast<int>(backBufferFormat));
 			}
 		}
 
@@ -1906,7 +1868,6 @@ namespace F4R_Upscaling
 				dlssOutputTexture.reset();
 				return;
 			}
-			REX::LogDebug("dlssOutputTexture {}x{} fmt={}", texDesc.Width, texDesc.Height, static_cast<int>(backBufferFormat));
 		}
 #endif
 
@@ -1952,11 +1913,9 @@ namespace F4R_Upscaling
 					return;
 				}
 
-				REX::LogDebug("motionVectorTexture {}x{} R16G16_FLOAT", texDesc.Width, texDesc.Height);
-			}
-
 			EnsureMotionVectorFixResources(device);
 			EnsureSharpenResources(device, state.screenWidth, state.screenHeight, backBufferFormat, typedFormat);
+			}
 		}
 #endif
 #if F4R_HAS_FSR3
@@ -1968,7 +1927,6 @@ namespace F4R_Upscaling
 					backBufferFormat)) {
 				REX::LogError("CheckResources: CreateFSRResources failed");
 				fidelityFX.reset();
-				fsrRetryFrame = state.frameCount;
 			} else if (g_enbLoaded && settings.iQualityMode >= 1 && settings.iQualityMode <= 3) {
 				REX::LogInformation("ENB forces Native for FSR3");
 			}
@@ -1983,7 +1941,6 @@ namespace F4R_Upscaling
 				if (!xess.disabled) {
 					REX::LogWarning("XeSS disabled: {} fallback to Native", a_reason);
 					xess.disabled = true;
-					xessRetryFrame = state.frameCount;
 				}
 				xess.DestroyContext();
 				xess.TeardownD3D12();
@@ -1995,12 +1952,7 @@ namespace F4R_Upscaling
 				resetHistory = true;
 			};
 			if (xess.disabled) {
-				if (state.frameCount - xessRetryFrame >= 600) {
-					xess.disabled = false;
-				} else {
-					fallbackNative("session disabled");
-					return;
-				}
+				return;
 			}
 			if (!xess.loaded) {
 				xess.Load();
@@ -2115,10 +2067,6 @@ namespace F4R_Upscaling
 			if (settings.iQualityMode == 2) { s = settings.fBalancedScale; }
 			else if (settings.iQualityMode == 3) { s = settings.fPerformanceScale; }
 
-			REX::LogDebug("{} {}: scale={:.3f} {}x{} -> {}x{}",
-				MethodName(settings.iMethod), QualityName(settings.iQualityMode), static_cast<double>(s),
-				state.screenWidth, state.screenHeight,
-				uint32_t(state.screenWidth * s), uint32_t(state.screenHeight * s));
 		}
 	}
 

@@ -37,13 +37,11 @@ namespace F4R_Upscaling
 
 		void UpdateGameSettings();
 		void RestoreAASettings();
-		void PollMethodChange();
 		void ReturnToVanilla();
 		void CheckResources();
 		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
 		void InvalidateFlareDepth();
 		void PollRuntimeSettings();
-		void PollSettingsChanged();
 		void RequestReset();
 		void BuildFlareDepth(RE::BSGraphics::RenderTargetManager& a_rtMgr);
 		void PushFlareDepth();
@@ -215,14 +213,10 @@ namespace F4R_Upscaling
 
 		std::uint64_t settingsIniWriteTime = 0;
 		bool settingsIniHasTime = false;
-		std::uint64_t methodIniWriteTime = 0;
-		bool methodIniHasTime = false;
-		int32_t lastRequestedMethod = -1;
 		bool fxaaStateSaved = false;
 		bool fxaaOriginalActive = false;
 		bool taaFlagSaved = false;
 		bool taaFlagOriginal = false;
-		std::atomic<bool> pendingSettingsRefresh = false;
 		bool resourcesCreated = false;
 		uint32_t cachedWidth = 0;
 		uint32_t cachedHeight = 0;
@@ -231,15 +225,11 @@ namespace F4R_Upscaling
 #if F4R_HAS_XESS
 		int32_t cachedQuality = -1;
 #endif
-#if F4R_HAS_FSR3
-		std::uint32_t fsrRetryFrame = 0;
-#endif
-#if F4R_HAS_XESS
-		std::uint32_t xessRetryFrame = 0;
-#endif
 
 		int startupFrameGuard = 0;
 		bool initialized = false;
 		float prevScale = 1.0f;
+		int32_t lastWorkingMethod = static_cast<int32_t>(Method::FSR3);
+		bool dlssUnsupportedLogged = false;
 	};
 }

@@ -235,7 +235,6 @@ namespace F4R_Upscaling
 		else if (quality == XESS_QUALITY_SETTING_BALANCED) qname = "Balanced";
 		else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) qname = "Performance";
 		initialized = true;
-		REX::LogDebug("XeSS context created ({}x{} {})", a_width, a_height, qname);
 		return true;
 	}
 
@@ -322,10 +321,9 @@ namespace F4R_Upscaling
 				REX::LogError("CreateUnorderedAccessView(shared) failed");
 			}
 		}
-
-		REX::LogDebug("shared texture {}x{} fmt={} bind=0x{:x}", a_width, a_height, static_cast<int>(a_format), a_bindFlags);
 		return true;
 	}
+
 
 	void XeSS::Execute(
 		SharedTexture2D* a_color,

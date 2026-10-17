@@ -28,7 +28,6 @@ namespace F4R_Upscaling
 				REX::LogWarning("[SL]: {}", a_msg);
 				break;
 			default:
-				REX::LogDebug("[SL]: {}", a_msg);
 				break;
 			}
 		}

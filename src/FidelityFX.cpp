@@ -92,9 +92,6 @@ namespace F4R_Upscaling
 		contextDesc.fpMessage = nullptr;
 		contextDesc.backBufferFormat = ffxGetSurfaceFormatDX11(backBufferFormat);
 
-		REX::LogDebug("CreateFSRResources: flags=0x{:x} size={}x{} fmt={}",
-			contextDesc.flags, backBufferWidth, backBufferHeight, static_cast<int>(backBufferFormat));
-
 		err = ffxFsr3ContextCreate(&fsrContext, &contextDesc);
 		if (err != FFX_OK) {
 			REX::LogError("CreateFSRResources: ffxFsr3ContextCreate failed error={} (0x{:x})",
@@ -103,8 +100,6 @@ namespace F4R_Upscaling
 			fsrScratchBuffer = nullptr;
 			return false;
 		}
-
-		REX::LogDebug("FSR3 context created ({}x{})", backBufferWidth, backBufferHeight);
 
 		const std::pair<FfxFsr3UpscalerConfigureKey, float> upscalerConstants[] = {
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, 1.0f },

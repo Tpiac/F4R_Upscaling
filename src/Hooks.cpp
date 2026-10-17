@@ -27,9 +27,7 @@ namespace
 
 	inline void LogHookResult(const char* a_name, std::uintptr_t a_original)
 	{
-		if (a_original)
-			REX::LogDebug("{} installed", a_name);
-		else
+		if (!a_original)
 			REX::LogWarning("{} FAILED", a_name);
 	}
 
@@ -105,30 +103,27 @@ namespace
 		Upscaling::GetSingleton().ResetSamplerStates();
 	}
 
-	struct OutlineGate
+	struct VatsSettleGate
 	{
-		bool windowActive = false;
+		bool suppressed = false;
 		std::uint32_t fx12Stable = 0;
 	};
 
-	OutlineGate g_outlineGate;
+	VatsSettleGate g_vatsSettle;
 
-	inline bool OutlineWindowActive(OutlineGate& a_gate, std::uint32_t a_frame)
+	inline bool VatsSplitDeferred(VatsSettleGate& a_gate)
 	{
 		bool vats = false;
-		bool workshop = false;
 		if (auto* ui = RE::UI::GetSingleton()) {
 			static const RE::BSFixedString vatsMenu("VATSMenu");
-			static const RE::BSFixedString workshopMenu("WorkshopMenu");
 			vats = ui->IsMenuOpen(vatsMenu).value_or(false);
-			workshop = ui->IsMenuOpen(workshopMenu).value_or(false);
 		}
 
 		constexpr auto fxVatsTarget = static_cast<std::size_t>(
 		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_VATS_TARGET);
 		constexpr std::uint32_t kVatsStableFrames = 20;
 
-		bool active = false;
+		bool deferred = false;
 		if (vats) {
 			bool fx12 = false;
 			if (auto* ism = RE::ImageSpaceManager::GetSingleton()) {
@@ -139,20 +134,16 @@ namespace
 			a_gate.fx12Stable = fx12 ?
 				(a_gate.fx12Stable < kVatsStableFrames ? a_gate.fx12Stable + 1 : kVatsStableFrames) :
 				0;
-			active = a_gate.fx12Stable >= kVatsStableFrames;
+			deferred = a_gate.fx12Stable < kVatsStableFrames;
 		} else {
 			a_gate.fx12Stable = 0;
-			active = workshop;
+			deferred = false;
 		}
 
-		if (active != a_gate.windowActive) {
-			a_gate.windowActive = active;
-			REX::LogDebug(
-				"Menu frame={}: full-extent window {} (vats={} workshop={} stable={}/{})",
-				a_frame, active ? "active" : "suppressed",
-				vats ? 1 : 0, workshop ? 1 : 0, a_gate.fx12Stable, kVatsStableFrames);
+		if (deferred != a_gate.suppressed) {
+			a_gate.suppressed = deferred;
 		}
-		return active;
+		return deferred;
 	}
 
 	using Effects_PreserveJitterFunc = void(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
@@ -166,7 +157,7 @@ namespace
 		float savedY = state.offsetY;
 
 		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() ||
-			IsContainerMenuOpen() || !OutlineWindowActive(g_outlineGate, state.frameCount)) {
+			IsContainerMenuOpen() || VatsSplitDeferred(g_vatsSettle)) {
 			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
 			state.offsetX = savedX;
 			state.offsetY = savedY;
@@ -335,7 +326,6 @@ namespace F4R_Upscaling
 
 	void Upscaling::InstallHooks()
 	{
-		REX::LogDebug("Installing hooks...");
 
 		{
 			std::uintptr_t vtableAddr;
@@ -461,7 +451,6 @@ namespace F4R_Upscaling
 			g_originalSSLRRaytracing_SkipInQualityModes = reinterpret_cast<SSLRRaytracing_SkipInQualityModesFunc*>(result);
 			LogHookResult("SSLRRaytracing_SkipInQualityModes", result);
 		}
-
-		REX::LogDebug("All hooks installed");
 	}
 }
+
