@@ -78,9 +78,8 @@ namespace
 
 		up.savedWidthRatio = GetDynWidthRatio(*a_this);
 		up.savedHeightRatio = GetDynHeightRatio(*a_this);
-		GetDynWidthRatio(*a_this) = 1.0f;
-		GetDynHeightRatio(*a_this) = 1.0f;
-		GetDynResActivated(*a_this) = false;
+		SetGlobalDynamicRatio(*a_this, 1.0f, 1.0f);
+		GetSetCurrentViewportDefault()(a_this);
 	}
 
 	using SamplerState_OverrideMipBiasFunc = void(void*);
@@ -166,14 +165,29 @@ namespace
 
 		g_originalEffects_PreserveJitter(a_this, 0, 3, a_p4, a_p5);
 
-		const bool entered = up.EnterFullExtentPass();
+		const bool entered = up.EnterFullExtentPass(Upscaling::kProxyCopyIn, true);
 		g_originalEffects_PreserveJitter(a_this, 4, 13, a_p4, a_p5);
 		if (entered) {
-			up.ExitFullExtentPass();
+			up.ExitFullExtentPass(Upscaling::kProxyMainTempOut);
 		}
 
 		state.offsetX = savedX;
 		state.offsetY = savedY;
+	}
+
+	using Hook_DeferredCompositeFunc = void(void*, std::uint32_t, bool);
+	Hook_DeferredCompositeFunc* g_originalDeferredCompositeRenderPass = nullptr;
+	Hook_DeferredCompositeFunc* g_originalDeferredCompositeFogPass = nullptr;
+
+	template<Hook_DeferredCompositeFunc*& OriginalFunc, const auto& a_copyIn>
+	void Hook_DeferredCompositeTemplate(void* a_this, std::uint32_t a_p2, bool a_p3)
+	{
+		auto& up = Upscaling::GetSingleton();
+		const bool entered = up.EnterFullExtentPass(a_copyIn, false);
+		OriginalFunc(a_this, a_p2, a_p3);
+		if (entered) {
+			up.ExitFullExtentPass(Upscaling::kProxyMainTempOut);
+		}
 	}
 
 	using Loading_ResetDynamicResolutionFunc = void();
@@ -184,9 +198,8 @@ namespace
 		g_originalLoading_ResetDynamicResolution();
 
 		auto& rtMgr = RenderTargetManager::GetSingleton();
-		GetDynWidthRatio(rtMgr) = 1.0f;
-		GetDynHeightRatio(rtMgr) = 1.0f;
-		GetDynResActivated(rtMgr) = false;
+		SetGlobalDynamicRatio(rtMgr, 1.0f, 1.0f);
+		GetSetCurrentViewportDefault()(&rtMgr);
 		auto& up = Upscaling::GetSingleton();
 		up.InvalidateFlareDepth();
 		up.RequestReset();
@@ -206,7 +219,7 @@ namespace
 		if (up.scaledTargetsOverridden) {
 			REX::LogWarning("Leak frame={} full-extent pass still open: force-closing",
 				state.frameCount);
-			up.ExitFullExtentPass();
+			up.AbortFullExtentPass();
 		}
 		if (up.hbaoActive) {
 			REX::LogWarning("Leak frame={} HBAO pass still open: force-closing",
@@ -229,10 +242,8 @@ namespace
 			up.savedHeightRatio = GetDynHeightRatio(rtMgr);
 		}
 
-		GetDynWidthRatio(rtMgr) = up.savedWidthRatio;
-		GetDynHeightRatio(rtMgr) = up.savedHeightRatio;
-		GetDynResActivated(rtMgr) =
-			(up.savedWidthRatio != 1.0f || up.savedHeightRatio != 1.0f);
+		SetGlobalDynamicRatio(rtMgr, up.savedWidthRatio, up.savedHeightRatio);
+		GetSetCurrentViewportDefault()(&rtMgr);
 	}
 
 	using LensFlare_ForceFullResDepthFunc = void(RE::NiCamera*);
@@ -279,38 +290,39 @@ namespace
 		}
 	}
 
-	using SSLRRaytracing_SkipInQualityModesFunc = void(RE::BSShader*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
-	SSLRRaytracing_SkipInQualityModesFunc* g_originalSSLRRaytracing_SkipInQualityModes = nullptr;
+	using SSLR_SetCurrentRenderTargetFunc = void(RE::BSGraphics::RenderTargetManager*, std::int32_t, std::int32_t, RE::BSGraphics::SetRenderTargetMode);
+	SSLR_SetCurrentRenderTargetFunc* g_originalSSLR_SetCurrentRenderTarget = nullptr;
 
-	void Hook_SSLRRaytracing_SkipInQualityModes(RE::BSShader* a_this, std::uint32_t a_p2, std::uint32_t a_p3, std::uint32_t a_p4, std::uint32_t a_p5)
+	void Hook_SSLR_SetRayStart(RE::BSGraphics::RenderTargetManager* a_this, std::int32_t a_slot, std::int32_t a_logicalID, RE::BSGraphics::SetRenderTargetMode a_mode)
 	{
-		if (g_originalSSLRRaytracing_SkipInQualityModes) {
-			g_originalSSLRRaytracing_SkipInQualityModes(a_this, a_p2, a_p3, a_p4, a_p5);
+		if (a_slot == 0 && a_logicalID == LogicalRenderTarget::kSSLRRayStart) {
+			Upscaling::GetSingleton().BeginSSLRPass();
 		}
+		g_originalSSLR_SetCurrentRenderTarget(a_this, a_slot, a_logicalID, a_mode);
+	}
+
+	using SSLR_AcquireRenderTargetFunc = void(RE::BSGraphics::RenderTargetManager*, std::int32_t);
+	SSLR_AcquireRenderTargetFunc* g_originalSSLR_AcquireRenderTarget = nullptr;
+
+	void Hook_SSLR_AcquireBlurH(RE::BSGraphics::RenderTargetManager* a_this, std::int32_t a_logicalID)
+	{
+		g_originalSSLR_AcquireRenderTarget(a_this, a_logicalID);
+		if (a_logicalID == LogicalRenderTarget::kSSLRBlurH) {
+			Upscaling::GetSingleton().AcquirePooledSSLRProxy();
+		}
+	}
+
+	using SSLR_ReleaseRenderTargetFunc = void(RE::BSGraphics::RenderTargetManager*, std::int32_t);
+	SSLR_ReleaseRenderTargetFunc* g_originalSSLR_ReleaseRenderTarget = nullptr;
+
+	void Hook_SSLR_ReleaseBlurH(RE::BSGraphics::RenderTargetManager* a_this, std::int32_t a_logicalID)
+	{
 		auto& up = Upscaling::GetSingleton();
-		if (up.upsclEnabled && up.currentScale < 0.999f && up.settings.iQualityMode >= 1 && !g_enbLoaded) {
-			auto* rendererData = BSGraphics::RendererData::GetSingleton();
-			auto* ctx = GetImmediateContext();
-			if (rendererData && ctx) {
-				static const float kClear[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-				static const std::uint32_t kSSRTargets[] = {
-					F4R_Upscaling::RenderTarget::kSSRRaw,
-					F4R_Upscaling::RenderTarget::kSSRBlurred,
-					F4R_Upscaling::RenderTarget::kSSRBlurredExtra,
-					F4R_Upscaling::RenderTarget::kSSRDirection,
-					F4R_Upscaling::RenderTarget::kSSRMask,
-				};
-				for (auto idx : kSSRTargets) {
-					if (idx >= rendererData->renderTargets.size()) {
-						continue;
-					}
-					auto* rtv = reinterpret_cast<ID3D11RenderTargetView*>(rendererData->renderTargets[idx].rtView);
-					if (rtv) {
-						ctx->ClearRenderTargetView(rtv, kClear);
-					}
-				}
-			}
+		if (a_logicalID == LogicalRenderTarget::kSSLRBlurH) {
+			up.ReleasePooledSSLRProxy();
+			up.EndSSLRPass();
 		}
+		g_originalSSLR_ReleaseRenderTarget(a_this, a_logicalID);
 	}
 }
 
@@ -372,6 +384,24 @@ namespace F4R_Upscaling
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_Effects_PreserveJitter));
 			g_originalEffects_PreserveJitter = reinterpret_cast<Effects_PreserveJitterFunc*>(result);
 			LogHookResult("Effects_PreserveJitter", result);
+		}
+
+		{
+			if (IsOG()) {
+				auto addr = GetOGAddr(0x2855E60 + 0x8DC);
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeTemplate<g_originalDeferredCompositeRenderPass, Upscaling::kProxyCompositeCopyIn>));
+				g_originalDeferredCompositeRenderPass = reinterpret_cast<Hook_DeferredCompositeFunc*>(result);
+				LogHookResult("Hook_DeferredCompositeRenderPass", result);
+			}
+		}
+
+		{
+			if (IsOG()) {
+				auto addr = GetOGAddr(0x2855E60 + 0x989);
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeTemplate<g_originalDeferredCompositeFogPass, Upscaling::kProxyTargets>));
+				g_originalDeferredCompositeFogPass = reinterpret_cast<Hook_DeferredCompositeFunc*>(result);
+				LogHookResult("Hook_DeferredCompositeFogPass", result);
+			}
 		}
 
 		{
@@ -440,16 +470,46 @@ namespace F4R_Upscaling
 			LogHookResult("NVHBAO", hbaoHooked ? 1 : 0);
 		}
 
-		if (!g_enbLoaded) {
-			std::uintptr_t addr;
-			if (IsAE() || IsNG()) {
-				addr = REL::Relocation{ REL::Id<>{ 2317302 } }.GetAddress() + 0x1C;
-			} else {
-				addr = REL::Relocation{ REL::Id<>{ 779077 } }.GetAddress() + 0x1C;
+		{
+			bool hooked = false;
+			auto addr = ResolveAddr(0x2855E60 + 0x3D9, 0x235FF2, -0x1F60 + 0x3EE);
+			try {
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_SetRayStart));
+					g_originalSSLR_SetCurrentRenderTarget = reinterpret_cast<SSLR_SetCurrentRenderTargetFunc*>(result);
+					hooked = result != 0;
+				}
+			} catch (...) {
 			}
-			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLRRaytracing_SkipInQualityModes));
-			g_originalSSLRRaytracing_SkipInQualityModes = reinterpret_cast<SSLRRaytracing_SkipInQualityModesFunc*>(result);
-			LogHookResult("SSLRRaytracing_SkipInQualityModes", result);
+			LogHookResult("SSLR_SetCurrentRenderTarget", hooked ? 1 : 0);
+		}
+
+		{
+			bool hooked = false;
+			auto addr = ResolveAddr(0x2855E60 + 0x5FB, 0x235FF2, -0x1F60 + 0x60E);
+			try {
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_AcquireBlurH));
+					g_originalSSLR_AcquireRenderTarget = reinterpret_cast<SSLR_AcquireRenderTargetFunc*>(result);
+					hooked = result != 0;
+				}
+			} catch (...) {
+			}
+			LogHookResult("SSLR_AcquireRenderTarget", hooked ? 1 : 0);
+		}
+
+		{
+			bool hooked = false;
+			auto addr = ResolveAddr(0x2855E60 + 0x6BA, 0x235FF2, -0x1F60 + 0x6C3);
+			try {
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_ReleaseBlurH));
+					g_originalSSLR_ReleaseRenderTarget = reinterpret_cast<SSLR_ReleaseRenderTargetFunc*>(result);
+					hooked = result != 0;
+				}
+			} catch (...) {
+			}
+			LogHookResult("SSLR_ReleaseRenderTarget", hooked ? 1 : 0);
 		}
 	}
 }

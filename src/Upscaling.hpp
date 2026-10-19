@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <span>
 
 #include "Common.hpp"
 
@@ -61,8 +62,15 @@ namespace F4R_Upscaling
 		void InvokeHBAODynRes(bool a_dynamic);
 
 		void UpdateScaledTargets(float a_widthRatio, float a_heightRatio);
-		bool EnterFullExtentPass();
-		void ExitFullExtentPass();
+		bool EnterFullExtentPass(std::span<const std::uint32_t> a_copyIn, bool a_clearProxies);
+		void ExitFullExtentPass(std::span<const std::uint32_t> a_copyOut);
+		void AbortFullExtentPass();
+		void AcquirePooledSSLRProxy();
+		void ReleasePooledSSLRProxy();
+		void BeginSSLRPass();
+		void EndSSLRPass();
+		void PushUnitScreenTriangle();
+		void PopUnitScreenTriangle();
 		[[nodiscard]] bool HasScaledTargets() const noexcept { return scaledTargetsValid; }
 		void ReleaseScaledTargets();
 
@@ -134,7 +142,7 @@ namespace F4R_Upscaling
 		float cachedSamplerBias = 0.0f;
 		bool samplerCacheValid = false;
 
-		static constexpr std::uint32_t kProxyTargetCount = 25;
+		static constexpr std::uint32_t kProxyTargetCount = 24;
 		static constexpr std::uint32_t kProxyTargetMetaCount = 100;
 		static constexpr std::uint32_t kProxyTargets[kProxyTargetCount] = {
 			LogicalRenderTarget::kGbufferNormal,
@@ -158,19 +166,39 @@ namespace F4R_Upscaling
 			LogicalRenderTarget::kSSLRRayStart,
 			LogicalRenderTarget::kSSLRSurfaceDepth,
 			LogicalRenderTarget::kSSLRRayResult,
-			LogicalRenderTarget::kSSLRBlurH,
 			LogicalRenderTarget::kLuminanceDownscale,
 			LogicalRenderTarget::kMainVerticalBlur,
 			LogicalRenderTarget::kHdrImagespaceAux,
 		};
-		static constexpr std::uint32_t kProxyCopyInCount = 4;
-		static constexpr std::uint32_t kProxyCopyIn[kProxyCopyInCount] = {
+		static constexpr std::uint32_t kProxyCopyIn[] = {
 			LogicalRenderTarget::kRefractionNormal,
 			LogicalRenderTarget::kMainTemp,
 			LogicalRenderTarget::kMotionVectors,
 			LogicalRenderTarget::kHdrImagespaceAux,
 		};
-		static constexpr std::uint32_t kProxyCopyOut = LogicalRenderTarget::kMainTemp;
+		static constexpr std::uint32_t kProxyMainTempOut[] = { LogicalRenderTarget::kMainTemp };
+		static constexpr std::uint32_t kProxyCompositeCopyIn[] = {
+			LogicalRenderTarget::kGbufferNormal,
+			LogicalRenderTarget::kAmbientOcclusion,
+			LogicalRenderTarget::kGbufferMetadata,
+			LogicalRenderTarget::kGbufferMaterial,
+			LogicalRenderTarget::kGbufferEmissive,
+			LogicalRenderTarget::kDiffuseBufferA,
+			LogicalRenderTarget::kSpecularBufferA,
+			LogicalRenderTarget::kMain,
+			LogicalRenderTarget::kDiffuseBufferB,
+			LogicalRenderTarget::kSpecularBufferB,
+			LogicalRenderTarget::kAmbientOcclusionHalf,
+		};
+		static constexpr std::uint32_t kProxySSLRCopyIn[] = {
+			LogicalRenderTarget::kGbufferNormal,
+			LogicalRenderTarget::kGbufferMetadata,
+			LogicalRenderTarget::kMain,
+		};
+		static constexpr std::uint32_t kProxySSLRCopyOut[] = {
+			LogicalRenderTarget::kSSLRRayResult,
+			LogicalRenderTarget::kSSLRBlurV,
+		};
 
 		RE::BSGraphics::RenderTarget savedScaledTargets[kProxyTargetCount]{};
 		RE::BSGraphics::RenderTarget proxyScaledTargets[kProxyTargetCount]{};
@@ -189,8 +217,18 @@ namespace F4R_Upscaling
 
 		std::unique_ptr<Texture2D> depthOverrideTexture;
 		ID3D11ComputeShader* depthOverrideShader = nullptr;
-		ID3D11Buffer* depthOverrideCB = nullptr;
 		ID3D11ShaderResourceView* depthOverrideBackup = nullptr;
+
+		RE::NiPointer<RE::BSTriShape> unitScreenTriangle;
+		bool sslrPassOpen = false;
+
+		RE::BSGraphics::RenderTarget pooledProxySaved{};
+		std::unique_ptr<Texture2D> pooledProxyTexture;
+		std::uint32_t pooledProxySlot = 0;
+		std::uint32_t pooledProxyWidth = 0;
+		std::uint32_t pooledProxyHeight = 0;
+		DXGI_FORMAT pooledProxyFormat = DXGI_FORMAT_UNKNOWN;
+		bool pooledProxyActive = false;
 
 		float jitterX = 0.0f;
 		float jitterY = 0.0f;
@@ -208,6 +246,7 @@ namespace F4R_Upscaling
 		bool PushFullExtentDepth();
 		void PopFullExtentDepth();
 		void ReleaseProxyTargets();
+		void ReleasePooledSSLRTexture();
 
 		Upscaling() = default;
 

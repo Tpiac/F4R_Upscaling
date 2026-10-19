@@ -84,7 +84,7 @@ namespace F4R_Upscaling
 	inline bool& GetDynResActivated(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
 		static const std::ptrdiff_t OG_OFFSET = 0xFA8;
-		static const std::ptrdiff_t AE_OFFSET = 0xFD8;
+		static const std::ptrdiff_t AE_OFFSET = 0xFE5;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
@@ -92,7 +92,7 @@ namespace F4R_Upscaling
 	inline bool& GetUseDynViewportAsDefault(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
 		static const std::ptrdiff_t OG_OFFSET = 0xFA7;
-		static const std::ptrdiff_t AE_OFFSET = 0xFD7;
+		static const std::ptrdiff_t AE_OFFSET = 0xFE4;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
@@ -103,6 +103,13 @@ namespace F4R_Upscaling
 		static const std::ptrdiff_t AE_OFFSET = 0xDF4;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
+	}
+
+	inline void SetGlobalDynamicRatio(RE::BSGraphics::RenderTargetManager& a_rtMgr, float a_widthRatio, float a_heightRatio)
+	{
+		GetDynWidthRatio(a_rtMgr) = a_widthRatio;
+		GetDynHeightRatio(a_rtMgr) = a_heightRatio;
+		GetDynResActivated(a_rtMgr) = (a_widthRatio != 1.0f || a_heightRatio != 1.0f);
 	}
 
 	namespace LogicalRenderTarget
@@ -146,17 +153,21 @@ namespace F4R_Upscaling
 			REL::Relocation{ REL::Id<>{ id } }.GetAddress());
 	}
 
+	using SetCurrentViewportDefaultFunc = void(RE::BSGraphics::RenderTargetManager*);
+
+	inline SetCurrentViewportDefaultFunc* GetSetCurrentViewportDefault()
+	{
+		const std::uintptr_t id = IsOG() ? 158420ull : 2277192ull;
+		return reinterpret_cast<SetCurrentViewportDefaultFunc*>(
+			REL::Relocation{ REL::Id<>{ id } }.GetAddress());
+	}
+
 	namespace RenderTarget
 	{
 		enum : std::uint32_t
 		{
 			kFrameBuffer = 0,
 			kMainTemp = 4,
-			kSSRRaw = 7,
-			kSSRBlurred = 8,
-			kSSRBlurredExtra = 9,
-			kSSRDirection = 10,
-			kSSRMask = 11,
 			kGbufferNormal = 20,
 			kSSAOFinal = 25,
 			kMotionVectors = 29,

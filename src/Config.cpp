@@ -113,8 +113,7 @@ namespace F4R_Upscaling
 		setEntry("fPerformanceScale", FormatFloat(settings.fPerformanceScale), "; Ranging from 0.50 to 0.55");
 		setEntry("fAnisotropicMipBias", FormatFloat(settings.fAnisotropicMipBias),
 			"; -0.0001 = default safety net to preserve samplers from being overridden\n"
-			"; 0.0 = allows other mods to override samplers (ranging from -2.0 to 0.0)\n"
-			"; Custom values apply in Native mode only");
+			"; Ranging from -2.0 to 0.0");
 
 		ini.SaveFile(a_path.c_str());
 	}
