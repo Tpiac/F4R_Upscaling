@@ -1,5 +1,6 @@
 #include "PCH.hpp"
 #include "Upscaling.hpp"
+#include "WorldTransformFix.hpp"
 #include <Detours.h>
 
 namespace
@@ -57,6 +58,8 @@ namespace
 
 	void Hook_PreRender_UpdateUpscState(RenderTargetManager* a_this, void* a_p2, void* a_p3, void* a_p4, void* a_p5)
 	{
+		WorldTransformFix::Update();
+
 		g_originalPreRender_UpdateUpscState(a_this, a_p2, a_p3, a_p4, a_p5);
 		Upscaling::GetSingleton().Update();
 	}
@@ -205,6 +208,8 @@ namespace
 		up.RequestReset();
 		up.ReleaseHBAOCache();
 		up.ReleaseScaledTargets();
+
+		WorldTransformFix::RequestSceneSweep();
 	}
 
 	using ImageSpace_RestoreDynamicResolutionFunc = void(void*);

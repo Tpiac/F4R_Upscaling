@@ -1,6 +1,7 @@
 #include "PCH.hpp"
 #include "Config.hpp"
 #include "Upscaling.hpp"
+#include "WorldTransformFix.hpp"
 #if F4R_HAS_STREAMLINE
 #include "Streamline.hpp"
 #endif
@@ -118,6 +119,7 @@ namespace
 				g_enbLoaded = IsENBLoaded();
 				F4R_Upscaling::Upscaling::GetSingleton().LoadSettings();
 				F4R_Upscaling::Upscaling::GetSingleton().Init();
+				F4R_Upscaling::WorldTransformFix::InstallHooks();
 				break;
 			}
 		case F4SE::MessagingInterface::MessageType::kPostLoadGame:
