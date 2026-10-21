@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Common.hpp"
+
 #if F4R_HAS_XESS
 
 #include <d3d11_4.h>

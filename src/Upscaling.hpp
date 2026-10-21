@@ -14,6 +14,27 @@ namespace F4R_Upscaling
 	class Upscaling
 	{
 	public:
+		enum class ProxyPass : std::uint8_t
+		{
+			IsFirst = 0,
+			IsSecond,
+			SSLR,
+			CompositeA,
+			CompositeB,
+			Count
+		};
+
+		struct ProxyPassProfile
+		{
+			std::uint32_t observedMask = 0;
+			std::uint32_t copyInMask = 0;
+			std::uint32_t staticMask = 0;
+			std::uint32_t stableFrames = 0;
+			bool narrowable = false;
+			bool learned = false;
+			bool fallback = false;
+		};
+
 		[[nodiscard]] static Upscaling& GetSingleton();
 
 		Upscaling(const Upscaling&) = delete;
@@ -62,9 +83,14 @@ namespace F4R_Upscaling
 		void InvokeHBAODynRes(bool a_dynamic);
 
 		void UpdateScaledTargets(float a_widthRatio, float a_heightRatio);
-		bool EnterFullExtentPass(std::span<const std::uint32_t> a_copyIn, bool a_clearProxies);
-		void ExitFullExtentPass(std::span<const std::uint32_t> a_copyOut);
+		bool EnterFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyIn,
+			bool a_clearProxies);
+		void ExitFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyOut);
 		void AbortFullExtentPass();
+		void ReapplyFullExtentOverride();
+		void ResetProxyPassProfiles();
+		std::uint32_t ObserveBoundProxySRVs(bool a_rebind);
+		[[nodiscard]] bool WillDeferredScatterRun() const;
 		void AcquirePooledSSLRProxy();
 		void ReleasePooledSSLRProxy();
 		void BeginSSLRPass();
@@ -144,6 +170,7 @@ namespace F4R_Upscaling
 
 		static constexpr std::uint32_t kProxyTargetCount = 24;
 		static constexpr std::uint32_t kProxyTargetMetaCount = 100;
+		static constexpr std::uint32_t kProxyLearnFrames = 30;
 		static constexpr std::uint32_t kProxyTargets[kProxyTargetCount] = {
 			LogicalRenderTarget::kGbufferNormal,
 			LogicalRenderTarget::kGbufferMetadata,
@@ -189,6 +216,7 @@ namespace F4R_Upscaling
 			LogicalRenderTarget::kDiffuseBufferB,
 			LogicalRenderTarget::kSpecularBufferB,
 			LogicalRenderTarget::kAmbientOcclusionHalf,
+			LogicalRenderTarget::kGbufferAlbedo,
 		};
 		static constexpr std::uint32_t kProxySSLRCopyIn[] = {
 			LogicalRenderTarget::kGbufferNormal,
@@ -236,6 +264,14 @@ namespace F4R_Upscaling
 		float savedWidthRatio = 1.0f;
 		float savedHeightRatio = 1.0f;
 		float currentScale = 1.0f;
+
+		std::uint32_t depthOverrideFrame = 0;
+
+		ProxyPassProfile proxyPassProfiles[static_cast<std::size_t>(ProxyPass::Count)]{};
+		std::uint32_t activeCopyInMask = 0;
+		std::uint32_t pendingObservedMask = 0;
+		ProxyPass activeProxyPass = ProxyPass::Count;
+		bool compositePassOpen = false;
 
 #if F4R_HAS_FSR3
 		std::unique_ptr<FidelityFX> fidelityFX;

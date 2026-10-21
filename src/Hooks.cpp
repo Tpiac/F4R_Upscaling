@@ -107,7 +107,6 @@ namespace
 
 	struct VatsSettleGate
 	{
-		bool suppressed = false;
 		std::uint32_t fx12Stable = 0;
 	};
 
@@ -142,10 +141,38 @@ namespace
 			deferred = false;
 		}
 
-		if (deferred != a_gate.suppressed) {
-			a_gate.suppressed = deferred;
-		}
 		return deferred;
+	}
+
+	constexpr std::uint32_t kEffectHdrCs = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_HDR_CS);
+	constexpr std::uint32_t kEffectRefraction = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_REFRACTION);
+	constexpr std::uint32_t kEffectDepthOfField = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_DEPTH_OF_FIELD);
+	constexpr std::uint32_t kEffectDepthOfFieldSplitScreen = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_DEPTH_OF_FIELD_SPLIT_SCREEN);
+	constexpr std::uint32_t kEffectFullScreenColor = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_FULLSCREEN_COLOR);
+
+	inline RE::ImageSpaceEffect* GetImageSpaceEffect(std::uint32_t a_index)
+	{
+		auto* ism = RE::ImageSpaceManager::GetSingleton();
+		if (!ism) return nullptr;
+		using Index = decltype(ism->effectList)::size_type;
+		const auto index = static_cast<Index>(a_index);
+		if (index >= ism->effectList.size()) return nullptr;
+		return ism->effectList[index];
+	}
+
+	inline bool IsEffectActive(RE::ImageSpaceEffect* a_effect)
+	{
+		if (!a_effect) return false;
+		using IsActiveFunc = bool(RE::ImageSpaceEffect*);
+		constexpr std::size_t isActiveSlot = 8;
+		auto** vtable = *reinterpret_cast<void***>(a_effect);
+		auto fn = reinterpret_cast<IsActiveFunc*>(vtable[isActiveSlot]);
+		return fn(a_effect);
 	}
 
 	using Effects_PreserveJitterFunc = void(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
@@ -166,12 +193,22 @@ namespace
 			return;
 		}
 
-		g_originalEffects_PreserveJitter(a_this, 0, 3, a_p4, a_p5);
+		g_originalEffects_PreserveJitter(a_this, 0, kEffectHdrCs - 1, a_p4, a_p5);
 
-		const bool entered = up.EnterFullExtentPass(Upscaling::kProxyCopyIn, true);
-		g_originalEffects_PreserveJitter(a_this, 4, 13, a_p4, a_p5);
+		bool entered = up.EnterFullExtentPass(Upscaling::ProxyPass::IsFirst, Upscaling::kProxyCopyIn, true);
+		g_originalEffects_PreserveJitter(a_this, kEffectHdrCs, kEffectRefraction, a_p4, a_p5);
 		if (entered) {
-			up.ExitFullExtentPass(Upscaling::kProxyMainTempOut);
+			up.ExitFullExtentPass(Upscaling::ProxyPass::IsFirst, Upscaling::kProxyMainTempOut);
+		}
+
+		if (IsEffectActive(GetImageSpaceEffect(kEffectDepthOfField))) {
+			g_originalEffects_PreserveJitter(a_this, kEffectDepthOfField, kEffectDepthOfField, a_p4, a_p5);
+		}
+
+		entered = up.EnterFullExtentPass(Upscaling::ProxyPass::IsSecond, Upscaling::kProxyCopyIn, false);
+		g_originalEffects_PreserveJitter(a_this, kEffectDepthOfFieldSplitScreen, kEffectFullScreenColor, a_p4, a_p5);
+		if (entered) {
+			up.ExitFullExtentPass(Upscaling::ProxyPass::IsSecond, Upscaling::kProxyMainTempOut);
 		}
 
 		state.offsetX = savedX;
@@ -181,16 +218,60 @@ namespace
 	using Hook_DeferredCompositeFunc = void(void*, std::uint32_t, bool);
 	Hook_DeferredCompositeFunc* g_originalDeferredCompositeRenderPass = nullptr;
 	Hook_DeferredCompositeFunc* g_originalDeferredCompositeFogPass = nullptr;
+	using DeferredCompositeEndFunc = void(void*);
+	DeferredCompositeEndFunc* g_originalDeferredCompositeEnd = nullptr;
 
-	template<Hook_DeferredCompositeFunc*& OriginalFunc, const auto& a_copyIn>
-	void Hook_DeferredCompositeTemplate(void* a_this, std::uint32_t a_p2, bool a_p3)
+	void Hook_DeferredCompositeRenderPass(void* a_this, std::uint32_t a_p2, bool a_p3)
 	{
 		auto& up = Upscaling::GetSingleton();
-		const bool entered = up.EnterFullExtentPass(a_copyIn, false);
-		OriginalFunc(a_this, a_p2, a_p3);
-		if (entered) {
-			up.ExitFullExtentPass(Upscaling::kProxyMainTempOut);
+
+		if (up.WillDeferredScatterRun()) {
+			const bool entered = up.EnterFullExtentPass(Upscaling::ProxyPass::CompositeA,
+				Upscaling::kProxyCompositeCopyIn, false);
+			if (entered) {
+				up.compositePassOpen = true;
+				g_originalDeferredCompositeRenderPass(a_this, a_p2, a_p3);
+				up.pendingObservedMask |= up.ObserveBoundProxySRVs(false);
+				return;
+			}
 		}
+
+		const bool entered = up.EnterFullExtentPass(Upscaling::ProxyPass::CompositeA,
+			Upscaling::kProxyCompositeCopyIn, false);
+		g_originalDeferredCompositeRenderPass(a_this, a_p2, a_p3);
+		if (entered) {
+			up.ExitFullExtentPass(Upscaling::ProxyPass::CompositeA, Upscaling::kProxyMainTempOut);
+		}
+	}
+
+	void Hook_DeferredCompositeFogPass(void* a_this, std::uint32_t a_p2, bool a_p3)
+	{
+		auto& up = Upscaling::GetSingleton();
+
+		if (up.compositePassOpen) {
+			up.ReapplyFullExtentOverride();
+			g_originalDeferredCompositeFogPass(a_this, a_p2, a_p3);
+			up.ExitFullExtentPass(Upscaling::ProxyPass::CompositeA, Upscaling::kProxyMainTempOut);
+			up.compositePassOpen = false;
+			return;
+		}
+
+		const bool entered = up.EnterFullExtentPass(Upscaling::ProxyPass::CompositeB,
+			Upscaling::kProxyCompositeCopyIn, false);
+		g_originalDeferredCompositeFogPass(a_this, a_p2, a_p3);
+		if (entered) {
+			up.ExitFullExtentPass(Upscaling::ProxyPass::CompositeB, Upscaling::kProxyMainTempOut);
+		}
+	}
+
+	void Hook_DeferredCompositeEnd(void* a_desc)
+	{
+		auto& up = Upscaling::GetSingleton();
+		if (up.compositePassOpen) {
+			up.ExitFullExtentPass(Upscaling::ProxyPass::CompositeA, Upscaling::kProxyMainTempOut);
+			up.compositePassOpen = false;
+		}
+		g_originalDeferredCompositeEnd(a_desc);
 	}
 
 	using Loading_ResetDynamicResolutionFunc = void();
@@ -394,7 +475,7 @@ namespace F4R_Upscaling
 		{
 			if (IsOG()) {
 				auto addr = GetOGAddr(0x2855E60 + 0x8DC);
-				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeTemplate<g_originalDeferredCompositeRenderPass, Upscaling::kProxyCompositeCopyIn>));
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeRenderPass));
 				g_originalDeferredCompositeRenderPass = reinterpret_cast<Hook_DeferredCompositeFunc*>(result);
 				LogHookResult("Hook_DeferredCompositeRenderPass", result);
 			}
@@ -403,9 +484,22 @@ namespace F4R_Upscaling
 		{
 			if (IsOG()) {
 				auto addr = GetOGAddr(0x2855E60 + 0x989);
-				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeTemplate<g_originalDeferredCompositeFogPass, Upscaling::kProxyTargets>));
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeFogPass));
 				g_originalDeferredCompositeFogPass = reinterpret_cast<Hook_DeferredCompositeFunc*>(result);
 				LogHookResult("Hook_DeferredCompositeFogPass", result);
+			}
+		}
+
+		{
+			if (IsOG()) {
+				auto addr = GetOGAddr(0x2855E60 + 0xA1E);
+				bool hooked = false;
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_DeferredCompositeEnd));
+					g_originalDeferredCompositeEnd = reinterpret_cast<DeferredCompositeEndFunc*>(result);
+					hooked = result != 0;
+				}
+				LogHookResult("Hook_DeferredCompositeEnd", hooked ? 1 : 0);
 			}
 		}
 
@@ -438,24 +532,18 @@ namespace F4R_Upscaling
 		{
 			bool vatsHooked = false;
 			if (IsAE() || IsNG()) {
-				try {
-					auto addr = REL::Relocation{ REL::Id<>{ 0x235E9F } }.GetAddress() + 0x110;
-					if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-						auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
-						g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
-						vatsHooked = (result != 0);
-					}
-				} catch (...) {
+				auto addr = REL::Relocation{ REL::Id<>{ 0x235E9F } }.GetAddress() + 0x110;
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
+					g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
+					vatsHooked = (result != 0);
 				}
 			} else {
-				try {
-					auto addr = REL::Relocation{ REL::Id<>{ 0xFE897 } }.GetAddress() + 0xBB;
-					if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-						auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
-						g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
-						vatsHooked = (result != 0);
-					}
-				} catch (...) {
+				auto addr = REL::Relocation{ REL::Id<>{ 0xFE897 } }.GetAddress() + 0xBB;
+				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
+					g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
+					vatsHooked = (result != 0);
 				}
 			}
 			LogHookResult("VatsTargetOutline", vatsHooked ? 1 : 0);
@@ -464,13 +552,10 @@ namespace F4R_Upscaling
 		{
 			bool hbaoHooked = false;
 			auto addr = ResolveAddr(0x2857480 + 0x1BA, 0x235FF1, 0x397);
-			try {
-				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_HBAO_Render));
-					g_originalHBAO_Render = reinterpret_cast<HBAO_RenderFunc*>(result);
-					hbaoHooked = (result != 0);
-				}
-			} catch (...) {
+			if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_HBAO_Render));
+				g_originalHBAO_Render = reinterpret_cast<HBAO_RenderFunc*>(result);
+				hbaoHooked = (result != 0);
 			}
 			LogHookResult("NVHBAO", hbaoHooked ? 1 : 0);
 		}
@@ -478,13 +563,10 @@ namespace F4R_Upscaling
 		{
 			bool hooked = false;
 			auto addr = ResolveAddr(0x2855E60 + 0x3D9, 0x235FF2, -0x1F60 + 0x3EE);
-			try {
-				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_SetRayStart));
-					g_originalSSLR_SetCurrentRenderTarget = reinterpret_cast<SSLR_SetCurrentRenderTargetFunc*>(result);
-					hooked = result != 0;
-				}
-			} catch (...) {
+			if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_SetRayStart));
+				g_originalSSLR_SetCurrentRenderTarget = reinterpret_cast<SSLR_SetCurrentRenderTargetFunc*>(result);
+				hooked = result != 0;
 			}
 			LogHookResult("SSLR_SetCurrentRenderTarget", hooked ? 1 : 0);
 		}
@@ -492,13 +574,10 @@ namespace F4R_Upscaling
 		{
 			bool hooked = false;
 			auto addr = ResolveAddr(0x2855E60 + 0x5FB, 0x235FF2, -0x1F60 + 0x60E);
-			try {
-				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_AcquireBlurH));
-					g_originalSSLR_AcquireRenderTarget = reinterpret_cast<SSLR_AcquireRenderTargetFunc*>(result);
-					hooked = result != 0;
-				}
-			} catch (...) {
+			if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_AcquireBlurH));
+				g_originalSSLR_AcquireRenderTarget = reinterpret_cast<SSLR_AcquireRenderTargetFunc*>(result);
+				hooked = result != 0;
 			}
 			LogHookResult("SSLR_AcquireRenderTarget", hooked ? 1 : 0);
 		}
@@ -506,13 +585,10 @@ namespace F4R_Upscaling
 		{
 			bool hooked = false;
 			auto addr = ResolveAddr(0x2855E60 + 0x6BA, 0x235FF2, -0x1F60 + 0x6C3);
-			try {
-				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
-					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_ReleaseBlurH));
-					g_originalSSLR_ReleaseRenderTarget = reinterpret_cast<SSLR_ReleaseRenderTargetFunc*>(result);
-					hooked = result != 0;
-				}
-			} catch (...) {
+			if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
+				auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SSLR_ReleaseBlurH));
+				g_originalSSLR_ReleaseRenderTarget = reinterpret_cast<SSLR_ReleaseRenderTargetFunc*>(result);
+				hooked = result != 0;
 			}
 			LogHookResult("SSLR_ReleaseRenderTarget", hooked ? 1 : 0);
 		}

@@ -2,7 +2,6 @@
 #include "Streamline.hpp"
 #include "Upscaling.hpp"
 
-#include <xmmintrin.h>
 #include <cmath>
 #include <sl_matrix_helpers.h>
 
@@ -32,22 +31,19 @@ namespace F4R_Upscaling
 			}
 		}
 
-		sl::float4x4 ToSLMatrix(const __m128* a_mat)
+		sl::float4x4 ToSLMatrix(const float* a_mat)
 		{
 			sl::float4x4 result;
 			for (int i = 0; i < 4; ++i) {
-				alignas(16) float row[4];
-				_mm_store_ps(row, a_mat[i]);
+				const float* row = a_mat + i * 4;
 				result[i] = sl::float4(row[0], row[1], row[2], row[3]);
 			}
 			return result;
 		}
 
-		sl::float3 ToSLFloat3(const __m128* a_v)
+		sl::float3 ToSLFloat3(const float* a_v)
 		{
-			alignas(16) float vals[4];
-			_mm_store_ps(vals, *a_v);
-			return sl::float3(vals[0], vals[1], vals[2]);
+			return sl::float3(a_v[0], a_v[1], a_v[2]);
 		}
 	}
 
@@ -200,15 +196,15 @@ namespace F4R_Upscaling
 		auto& state = RE::BSGraphics::State::GetSingleton();
 		const auto& camView = state.cameraState.camViewData;
 
-		sl::float4x4 viewMatrix = ToSLMatrix(camView.viewMat.data());
+		sl::float4x4 viewMatrix = ToSLMatrix(reinterpret_cast<const float*>(camView.viewMat.data()));
 		sl::float4x4 invView;
 		sl::matrixFullInvert(invView, viewMatrix);
-		sl::float4x4 vpUnjittered = ToSLMatrix(camView.viewProjUnjittered.data());
+		sl::float4x4 vpUnjittered = ToSLMatrix(reinterpret_cast<const float*>(camView.viewProjUnjittered.data()));
 		sl::matrixMul(constants.cameraViewToClip, invView, vpUnjittered);
 		sl::matrixFullInvert(constants.clipToCameraView, constants.cameraViewToClip);
 
-		sl::float4x4 currentVP = ToSLMatrix(camView.currentViewProjUnjittered.data());
-		sl::float4x4 previousVP = ToSLMatrix(camView.previousViewProjUnjittered.data());
+		sl::float4x4 currentVP = ToSLMatrix(reinterpret_cast<const float*>(camView.currentViewProjUnjittered.data()));
+		sl::float4x4 previousVP = ToSLMatrix(reinterpret_cast<const float*>(camView.previousViewProjUnjittered.data()));
 		sl::float4x4 invCurrentVP;
 		sl::matrixFullInvert(invCurrentVP, currentVP);
 		sl::matrixMul(constants.clipToPrevClip, invCurrentVP, previousVP);
@@ -216,9 +212,9 @@ namespace F4R_Upscaling
 
 		const auto& camState = state.cameraState;
 		constants.cameraPos = sl::float3(camState.posAdjust.x, camState.posAdjust.y, camState.posAdjust.z);
-		constants.cameraUp = ToSLFloat3(&camView.viewUp);
-		constants.cameraRight = ToSLFloat3(&camView.viewRight);
-		constants.cameraFwd = ToSLFloat3(&camView.viewDir);
+		constants.cameraUp = ToSLFloat3(reinterpret_cast<const float*>(&camView.viewUp));
+		constants.cameraRight = ToSLFloat3(reinterpret_cast<const float*>(&camView.viewRight));
+		constants.cameraFwd = ToSLFloat3(reinterpret_cast<const float*>(&camView.viewDir));
 
 		float cameraNear = 0.0f;
 		float cameraFar = 1.0f;

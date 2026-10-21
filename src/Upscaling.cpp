@@ -1,8 +1,12 @@
 #include "PCH.hpp"
 #include "Config.hpp"
 #include "Upscaling.hpp"
+#if F4R_HAS_STREAMLINE
 #include "Streamline.hpp"
+#endif
+#if F4R_HAS_XESS
 #include "XeSS.hpp"
+#endif
 
 #include "Shaders/MVFix.hpp"
 #include "Shaders/RCAS.hpp"
@@ -11,6 +15,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <format>
 
 namespace F4R_Upscaling
 {
@@ -336,14 +341,10 @@ namespace F4R_Upscaling
 	{
 		auto& config = Config::GetSingleton();
 
-		settings.iMethod = config.GetInt("Settings", "iMethod", F4R_DEFAULT_Method);
-#if F4R_HAS_DLSS && !F4R_HAS_FSR3 && !F4R_HAS_XESS
-		settings.iMethod = static_cast<int32_t>(Method::DLSS);
-#elif !F4R_HAS_DLSS && F4R_HAS_FSR3 && !F4R_HAS_XESS
-		settings.iMethod = static_cast<int32_t>(Method::FSR3);
-#elif !F4R_HAS_DLSS && !F4R_HAS_FSR3 && F4R_HAS_XESS
-		settings.iMethod = static_cast<int32_t>(Method::XeSS);
-#endif
+		settings.iMethod = config.GetInt("Settings", "iMethod", kDefaultMethod);
+		if constexpr (kSoleBackend != Method::Off) {
+			settings.iMethod = static_cast<int32_t>(kSoleBackend);
+		}
 
 		settings.fSharpness = ClampScale(config.GetFloat("Settings", "fSharpness", settings.fSharpness), 0.0f, 1.0f);
 		settings.iQualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
@@ -354,12 +355,12 @@ namespace F4R_Upscaling
 
 		settings.fAnisotropicMipBias = ClampScale(config.GetFloat("Settings", "fAnisotropicMipBias", settings.fAnisotropicMipBias), -2.0f, 0.0f);
 
-#if F4R_HAS_DLSS
-		settings.bEnableReflex = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
-		settings.bReflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
-		settings.bReflexUseFPSLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
-		settings.fReflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
-#endif
+		if constexpr (kHasDLSS) {
+			settings.bEnableReflex = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
+			settings.bReflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
+			settings.bReflexUseFPSLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
+			settings.fReflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
+		}
 
 		const char* methodName = MethodName(settings.iMethod);
 		const char* qname = QualityName(settings.iQualityMode);
@@ -367,14 +368,14 @@ namespace F4R_Upscaling
 		if (settings.iMethod == static_cast<int32_t>(Method::Off)) {
 			REX::LogInformation("Settings loaded: method=Off");
 		} else {
-#if F4R_HAS_DLSS
-			REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={} reflex={}",
-				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias,
-				settings.bEnableReflex ? "enabled" : "disabled");
-#else
-			REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={}",
-				methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias);
-#endif
+			if constexpr (kHasDLSS) {
+				REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={} reflex={}",
+					methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias,
+					settings.bEnableReflex ? "enabled" : "disabled");
+			} else {
+				REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={}",
+					methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias);
+			}
 		}
 
 		PollRuntimeSettings();
@@ -397,31 +398,31 @@ namespace F4R_Upscaling
 
 		if (!config.Reload()) return;
 
-#if F4R_HAS_MULTI
-		const int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
-		if (requested >= static_cast<int32_t>(Method::Off) && requested <= static_cast<int32_t>(Method::XeSS) &&
-			requested != settings.iMethod) {
-			dlssUnsupportedLogged = false;
+		if constexpr (kBackendCount > 1) {
+			const int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
+			if (requested >= static_cast<int32_t>(Method::Off) && requested <= static_cast<int32_t>(Method::XeSS) &&
+				requested != settings.iMethod) {
+				dlssUnsupportedLogged = false;
 #if F4R_HAS_DLSS
-			auto& streamline = Streamline::GetSingleton();
-			if (requested == static_cast<int32_t>(Method::DLSS) && streamline.initialized && !streamline.featureDLSS) {
-				settings.iMethod = lastWorkingMethod;
-				REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
-				dlssUnsupportedLogged = true;
-				resetHistory = true;
-			} else
+				auto& streamline = Streamline::GetSingleton();
+				if (requested == static_cast<int32_t>(Method::DLSS) && streamline.initialized && !streamline.featureDLSS) {
+					settings.iMethod = lastWorkingMethod;
+					REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
+					dlssUnsupportedLogged = true;
+					resetHistory = true;
+				} else
 #endif
-			{
-				settings.iMethod = requested;
-				if (requested == static_cast<int32_t>(Method::Off)) {
-					REX::LogInformation("Settings updated: method=Off");
-				} else {
-					REX::LogInformation("Settings updated: method={}", MethodName(requested));
+				{
+					settings.iMethod = requested;
+					if (requested == static_cast<int32_t>(Method::Off)) {
+						REX::LogInformation("Settings updated: method=Off");
+					} else {
+						REX::LogInformation("Settings updated: method={}", MethodName(requested));
+					}
+					resetHistory = true;
 				}
-				resetHistory = true;
 			}
 		}
-#endif
 
 		bool qualityChanged = false;
 		bool sharpnessChanged = false;
@@ -462,10 +463,10 @@ namespace F4R_Upscaling
 		}
 
 		if (scalesChanged) {
-			snprintf(scalesDesc, sizeof(scalesDesc), " scales=%.2f/%.2f/%.2f",
-				static_cast<double>(settings.fQualityScale),
-				static_cast<double>(settings.fBalancedScale),
-				static_cast<double>(settings.fPerformanceScale));
+			std::format_to_n(scalesDesc, sizeof(scalesDesc), " scales={:.2f}/{:.2f}/{:.2f}",
+				settings.fQualityScale,
+				settings.fBalancedScale,
+				settings.fPerformanceScale);
 		}
 
 		const bool reflexEnabled = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
@@ -484,7 +485,7 @@ namespace F4R_Upscaling
 		settings.fReflexFPSLimit = reflexFPSLimit;
 
 		if (reflexChanged) {
-			snprintf(reflexDesc, sizeof(reflexDesc), " reflex=%s%s%s",
+			std::format_to_n(reflexDesc, sizeof(reflexDesc), " reflex={}{}{}",
 				settings.bEnableReflex ? "enabled" : "disabled",
 				settings.bReflexBoost ? "+boost" : "",
 				settings.bReflexUseFPSLimit ? " limit" : "");
@@ -505,7 +506,7 @@ namespace F4R_Upscaling
 			}
 			if (sharpnessChanged) {
 				char num[16];
-				snprintf(num, sizeof(num), "%.1f", static_cast<double>(settings.fSharpness));
+				std::format_to_n(num, sizeof(num), "{:.1f}", settings.fSharpness);
 				line += " sharpness=";
 				line += num;
 			}
@@ -517,7 +518,7 @@ namespace F4R_Upscaling
 			}
 			if (mipBiasChanged) {
 				char num[16];
-				snprintf(num, sizeof(num), "%.4f", static_cast<double>(settings.fAnisotropicMipBias));
+				std::format_to_n(num, sizeof(num), "{:.4f}", settings.fAnisotropicMipBias);
 				size_t len = strlen(num);
 				while (len > 0 && num[len - 1] == '0' && num[len - 2] != '.') {
 					num[len - 1] = '\0';
@@ -542,6 +543,7 @@ namespace F4R_Upscaling
 			return;
 		}
 		initialized = true;
+		ResetProxyPassProfiles();
 
 		auto* branchPool = F4SE::GetTrampolineInterface()->AllocateFromBranchPool(256);
 		REL::GetTrampoline()->Init(branchPool, 256);
@@ -605,11 +607,11 @@ namespace F4R_Upscaling
 			}
 		}
 #endif
-#if F4R_HAS_FSR3
-		if (method == Method::FSR3) {
-			upsclEnabled = true;
+		if constexpr (kHasFSR3) {
+			if (method == Method::FSR3) {
+				upsclEnabled = true;
+			}
 		}
-#endif
 #if F4R_HAS_XESS
 		if (method == Method::XeSS) {
 			upsclEnabled = !XeSS::GetSingleton().disabled;
@@ -664,11 +666,12 @@ namespace F4R_Upscaling
 				} else
 #endif
 				{
-#if F4R_HAS_XESS
-					float basePhaseCount = (method == Method::XeSS) ? 16.0f : 8.0f;
-#else
 					float basePhaseCount = 8.0f;
-#endif
+					if constexpr (kHasXeSS) {
+						if (method == Method::XeSS) {
+							basePhaseCount = 16.0f;
+						}
+					}
 					int32_t phaseCount = GetJitterPhaseCount(renderWidth, displayWidth, basePhaseCount);
 					GetJitterOffset(&jitterX, &jitterY, state.frameCount, phaseCount);
 				}
@@ -708,6 +711,7 @@ namespace F4R_Upscaling
 		if (prevScale != desiredScale) {
 			resetHistory = true;
 			prevScale = desiredScale;
+			ResetProxyPassProfiles();
 		}
 
 		UpdateScaledTargets(GetDynWidthRatio(rtMgr), GetDynHeightRatio(rtMgr));
@@ -1266,6 +1270,7 @@ namespace F4R_Upscaling
 	void Upscaling::ReleaseScaledTargets()
 	{
 		sslrPassOpen = false;
+		compositePassOpen = false;
 		PopFullExtentDepth();
 		PopUnitScreenTriangle();
 		ReleasePooledSSLRProxy();
@@ -1469,6 +1474,7 @@ namespace F4R_Upscaling
 				return false;
 			}
 			depthOverrideTexture = std::move(texture);
+			depthOverrideFrame = 0;
 		}
 
 		if (!depthOverrideShader) {
@@ -1480,19 +1486,23 @@ namespace F4R_Upscaling
 			rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
 		if (!depthSRV) return false;
 
-		ID3D11RenderTargetView* prevRTV = nullptr;
-		ID3D11DepthStencilView* prevDSV = nullptr;
-		ctx->OMGetRenderTargets(1, &prevRTV, &prevDSV);
-		ctx->OMSetRenderTargets(0, nullptr, nullptr);
+		const bool needCopy = depthOverrideFrame != state.frameCount || depthOverrideFrame == 0;
+		if (needCopy) {
+			ID3D11RenderTargetView* prevRTV = nullptr;
+			ID3D11DepthStencilView* prevDSV = nullptr;
+			ctx->OMGetRenderTargets(1, &prevRTV, &prevDSV);
+			ctx->OMSetRenderTargets(0, nullptr, nullptr);
 
-		ID3D11ShaderResourceView* srvs[1] = { depthSRV };
-		RunComputePass(ctx, depthOverrideShader, nullptr, srvs, 1, depthOverrideTexture->uav,
-			(renderW + 7) / 8, (renderH + 7) / 8);
+			ID3D11ShaderResourceView* srvs[1] = { depthSRV };
+			RunComputePass(ctx, depthOverrideShader, nullptr, srvs, 1, depthOverrideTexture->uav,
+				(renderW + 7) / 8, (renderH + 7) / 8);
 
-		ID3D11RenderTargetView* prevTargets[1] = { prevRTV };
-		ctx->OMSetRenderTargets(1, prevTargets, prevDSV);
-		if (prevRTV) prevRTV->Release();
-		if (prevDSV) prevDSV->Release();
+			ID3D11RenderTargetView* prevTargets[1] = { prevRTV };
+			ctx->OMSetRenderTargets(1, prevTargets, prevDSV);
+			if (prevRTV) prevRTV->Release();
+			if (prevDSV) prevDSV->Release();
+			depthOverrideFrame = state.frameCount;
+		}
 
 		if (depthOverrideBackup) {
 			PopFullExtentDepth();
@@ -1516,7 +1526,8 @@ namespace F4R_Upscaling
 		depthOverrideBackup = nullptr;
 	}
 
-	bool Upscaling::EnterFullExtentPass(std::span<const std::uint32_t> a_copyIn, bool a_clearProxies)
+	bool Upscaling::EnterFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyIn,
+		bool a_clearProxies)
 	{
 		if (!scaledTargetsValid || scaledTargetsOverridden) {
 			return false;
@@ -1545,6 +1556,26 @@ namespace F4R_Upscaling
 			}
 		}
 
+		auto& profile = proxyPassProfiles[static_cast<std::size_t>(a_pass)];
+
+		std::uint32_t staticMask = 0;
+		for (const auto target : a_copyIn) {
+			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+				if (kProxyTargets[i] == target) {
+					staticMask |= (1u << i);
+					break;
+				}
+			}
+		}
+		profile.staticMask = staticMask;
+
+		const bool narrowed = profile.narrowable && profile.learned && !profile.fallback;
+		std::uint32_t copyMask = staticMask;
+		if (narrowed) {
+			copyMask = profile.copyInMask & staticMask;
+		}
+		profile.fallback = false;
+
 		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
 			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
 			rendererData->renderTargets[slot] = proxyScaledTargets[i];
@@ -1560,18 +1591,8 @@ namespace F4R_Upscaling
 			}
 		}
 
-		bool copyIn[kProxyTargetCount]{};
-		for (const auto target : a_copyIn) {
-			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
-				if (kProxyTargets[i] == target) {
-					copyIn[i] = true;
-					break;
-				}
-			}
-		}
-
 		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
-			if (!copyIn[i]) continue;
+			if ((copyMask & (1u << i)) == 0) continue;
 			auto* proxyTexture = reinterpret_cast<ID3D11Texture2D*>(proxyScaledTargets[i].texture);
 			D3D11_TEXTURE2D_DESC proxyDesc{};
 			proxyTexture->GetDesc(&proxyDesc);
@@ -1613,12 +1634,93 @@ namespace F4R_Upscaling
 		GetSetUseDynViewportAsDefault()(&a_rtMgr, false);
 		GetSetCurrentViewportDefault()(&a_rtMgr);
 		scaledTargetsOverridden = true;
+		activeProxyPass = a_pass;
+		activeCopyInMask = copyMask;
 
 		PushFullExtentDepth();
 		return true;
 	}
 
-	void Upscaling::ExitFullExtentPass(std::span<const std::uint32_t> a_copyOut)
+	void Upscaling::ReapplyFullExtentOverride()
+	{
+		if (!scaledTargetsOverridden) return;
+
+		auto& a_rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		const auto* targetIDs = GetRenderTargetIDs(a_rtMgr);
+		if (!rendererData || !targetIDs) return;
+
+		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
+			if (slot >= rendererData->renderTargets.size()) continue;
+			rendererData->renderTargets[slot] = proxyScaledTargets[i];
+		}
+
+		for (std::uint32_t i = 0; i < kProxyTargetMetaCount; ++i) {
+			a_rtMgr.renderTargetDataArray[i] = savedRenderTargetMeta[i];
+			a_rtMgr.renderTargetDataArray[i].width = static_cast<std::uint32_t>(
+				static_cast<float>(savedRenderTargetMeta[i].width) * scaledTargetWidthRatio);
+			a_rtMgr.renderTargetDataArray[i].height = static_cast<std::uint32_t>(
+				static_cast<float>(savedRenderTargetMeta[i].height) * scaledTargetHeightRatio);
+		}
+
+		SetGlobalDynamicRatio(a_rtMgr, 1.0f, 1.0f);
+		GetSetUseDynViewportAsDefault()(&a_rtMgr, false);
+		GetSetCurrentViewportDefault()(&a_rtMgr);
+	}
+
+	void Upscaling::ResetProxyPassProfiles()
+	{
+		for (auto& profile : proxyPassProfiles) {
+			profile = ProxyPassProfile{};
+		}
+		proxyPassProfiles[static_cast<std::size_t>(ProxyPass::CompositeA)].narrowable = true;
+		proxyPassProfiles[static_cast<std::size_t>(ProxyPass::CompositeB)].narrowable = true;
+		activeCopyInMask = 0;
+		pendingObservedMask = 0;
+		activeProxyPass = ProxyPass::Count;
+	}
+
+	bool Upscaling::WillDeferredScatterRun() const
+	{
+		if (!IsOG()) return false;
+
+		const auto* base = reinterpret_cast<std::uint8_t*>(REL::Module::GetSingleton()->GetBaseAddress());
+		auto* managerSlot = reinterpret_cast<void**>(const_cast<std::uint8_t*>(base) + 0x6723350);
+		if (!*managerSlot) return false;
+		auto* countSlot = *reinterpret_cast<void**>(
+			reinterpret_cast<std::uint8_t*>(*managerSlot) + 0x420 + 0xA * 8);
+		if (!countSlot) return false;
+		return *reinterpret_cast<const int*>(reinterpret_cast<std::uint8_t*>(countSlot) + 0x1C) > 0;
+	}
+
+	std::uint32_t Upscaling::ObserveBoundProxySRVs(bool a_rebind)
+	{
+		auto* ctx = GetImmediateContext();
+		std::uint32_t observedMask = 0;
+		if (!ctx) return observedMask;
+
+		ID3D11ShaderResourceView* boundSRVs[16] = {};
+		ctx->PSGetShaderResources(0, 16, boundSRVs);
+		for (int slot = 0; slot < 16; ++slot) {
+			if (!boundSRVs[slot]) continue;
+			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
+				auto* originalSRV = reinterpret_cast<ID3D11ShaderResourceView*>(savedScaledTargets[i].srView);
+				auto* proxySRV = reinterpret_cast<ID3D11ShaderResourceView*>(proxyScaledTargets[i].srView);
+				if (originalSRV && proxySRV && boundSRVs[slot] == proxySRV) {
+					observedMask |= (1u << i);
+					if (a_rebind) {
+						ctx->PSSetShaderResources(slot, 1, &originalSRV);
+					}
+					break;
+				}
+			}
+			boundSRVs[slot]->Release();
+		}
+		return observedMask;
+	}
+
+	void Upscaling::ExitFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyOut)
 	{
 		if (!scaledTargetsOverridden) return;
 		auto& a_rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
@@ -1627,20 +1729,33 @@ namespace F4R_Upscaling
 
 		PopFullExtentDepth();
 
-		if (ctx) {
-			ID3D11ShaderResourceView* boundSRVs[16] = {};
-			ctx->PSGetShaderResources(0, 16, boundSRVs);
-			for (int slot = 0; slot < 16; ++slot) {
-				if (!boundSRVs[slot]) continue;
-				for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
-					auto* originalSRV = reinterpret_cast<ID3D11ShaderResourceView*>(savedScaledTargets[i].srView);
-					auto* proxySRV = reinterpret_cast<ID3D11ShaderResourceView*>(proxyScaledTargets[i].srView);
-					if (originalSRV && proxySRV && boundSRVs[slot] == proxySRV) {
-						ctx->PSSetShaderResources(slot, 1, &originalSRV);
-						break;
-					}
+		std::uint32_t observedMask = ObserveBoundProxySRVs(true);
+		observedMask |= pendingObservedMask;
+		pendingObservedMask = 0;
+
+		auto& profile = proxyPassProfiles[static_cast<std::size_t>(a_pass)];
+		if (profile.narrowable) {
+			const std::uint32_t missing = observedMask & profile.staticMask & ~activeCopyInMask;
+			if (missing) {
+				profile.observedMask |= missing;
+				profile.stableFrames = 0;
+				profile.fallback = true;
+			} else {
+				const std::uint32_t merged = profile.observedMask | observedMask;
+				if (merged != profile.observedMask) {
+					profile.observedMask = merged;
+					profile.stableFrames = 0;
+				} else if (profile.stableFrames < kProxyLearnFrames) {
+					profile.stableFrames++;
 				}
-				boundSRVs[slot]->Release();
+				if (!profile.learned && profile.stableFrames >= kProxyLearnFrames &&
+					profile.observedMask != 0) {
+					profile.learned = true;
+				}
+			}
+
+			if (profile.learned) {
+				profile.copyInMask = profile.observedMask & profile.staticMask;
 			}
 		}
 
@@ -1687,13 +1802,16 @@ namespace F4R_Upscaling
 			savedPassDSV = nullptr;
 		}
 		scaledTargetsOverridden = false;
+		activeProxyPass = ProxyPass::Count;
+		activeCopyInMask = 0;
 	}
 
 	void Upscaling::AbortFullExtentPass()
 	{
 		if (!scaledTargetsOverridden) return;
 		sslrPassOpen = false;
-		ExitFullExtentPass(std::span<const std::uint32_t>{});
+		compositePassOpen = false;
+		ExitFullExtentPass(activeProxyPass, std::span<const std::uint32_t>{});
 		PopUnitScreenTriangle();
 	}
 
@@ -1809,7 +1927,7 @@ namespace F4R_Upscaling
 	void Upscaling::BeginSSLRPass()
 	{
 		if (sslrPassOpen) return;
-		if (!EnterFullExtentPass(kProxySSLRCopyIn, false)) return;
+		if (!EnterFullExtentPass(ProxyPass::SSLR, kProxySSLRCopyIn, false)) return;
 		sslrPassOpen = true;
 		PushUnitScreenTriangle();
 	}
@@ -1819,7 +1937,7 @@ namespace F4R_Upscaling
 		if (!sslrPassOpen) return;
 		sslrPassOpen = false;
 		PopUnitScreenTriangle();
-		ExitFullExtentPass(kProxySSLRCopyOut);
+		ExitFullExtentPass(ProxyPass::SSLR, kProxySSLRCopyOut);
 	}
 
 	void Upscaling::PushUnitScreenTriangle()

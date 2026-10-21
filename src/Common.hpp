@@ -6,26 +6,13 @@
 #include <d3d11.h>
 #include <d3d12.h>
 
-#ifndef F4R_HAS_DLSS
-	#define F4R_HAS_DLSS 1
-#endif
-#ifndef F4R_HAS_FSR3
-	#define F4R_HAS_FSR3 1
-#endif
-#ifndef F4R_HAS_XESS
-	#define F4R_HAS_XESS 1
-#endif
-#ifndef F4R_HAS_STREAMLINE
-	#define F4R_HAS_STREAMLINE 1
-#endif
-#ifndef F4R_DEFAULT_Method
-	#define F4R_DEFAULT_Method 1
+#if !defined(F4R_HAS_DLSS) || !defined(F4R_HAS_FSR3) || !defined(F4R_HAS_XESS) || \
+	!defined(F4R_HAS_STREAMLINE) || !defined(F4R_DEFAULT_Method)
+	#error "Build configuration is missing: F4R_HAS_DLSS/F4R_HAS_FSR3/F4R_HAS_XESS/F4R_HAS_STREAMLINE/F4R_DEFAULT_Method (see CMakeLists.txt)"
 #endif
 
-#if F4R_HAS_DLSS && F4R_HAS_FSR3 && F4R_HAS_XESS
-	#define F4R_HAS_MULTI 1
-#else
-	#define F4R_HAS_MULTI 0
+#if F4R_HAS_DLSS && !F4R_HAS_STREAMLINE
+	#error "The DLSS backend requires Streamline"
 #endif
 
 namespace RE::BSGraphics
@@ -190,9 +177,18 @@ namespace F4R_Upscaling
 		XeSS = 3
 	};
 
+	inline constexpr bool kHasDLSS = F4R_HAS_DLSS != 0;
+	inline constexpr bool kHasFSR3 = F4R_HAS_FSR3 != 0;
+	inline constexpr bool kHasXeSS = F4R_HAS_XESS != 0;
+	inline constexpr int kBackendCount = (kHasDLSS ? 1 : 0) + (kHasFSR3 ? 1 : 0) + (kHasXeSS ? 1 : 0);
+	inline constexpr Method kSoleBackend = kBackendCount == 1
+		? (kHasDLSS ? Method::DLSS : (kHasFSR3 ? Method::FSR3 : Method::XeSS))
+		: Method::Off;
+	inline constexpr int kDefaultMethod = F4R_DEFAULT_Method;
+
 	struct Settings
 	{
-		int32_t iMethod = F4R_DEFAULT_Method;
+		int32_t iMethod = kDefaultMethod;
 
 		float fSharpness = 0.5f;
 		float fAnisotropicMipBias = -0.0001f;

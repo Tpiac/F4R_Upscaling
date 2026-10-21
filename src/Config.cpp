@@ -1,7 +1,7 @@
 #include "PCH.hpp"
 #include "Config.hpp"
 
-#include <cstdio>
+#include <format>
 
 namespace F4R_Upscaling
 {
@@ -9,16 +9,12 @@ namespace F4R_Upscaling
 	{
 		std::string FormatInt(std::int32_t a_value)
 		{
-			char buf[32];
-			snprintf(buf, sizeof(buf), "%d", a_value);
-			return buf;
+			return std::to_string(a_value);
 		}
 
 		std::string FormatFloat(float a_value)
 		{
-			char buf[32];
-			snprintf(buf, sizeof(buf), "%g", static_cast<double>(a_value));
-			return buf;
+			return std::format("{:g}", a_value);
 		}
 
 		std::string FormatBool(bool a_value)
@@ -89,23 +85,23 @@ namespace F4R_Upscaling
 			ini.SetValue("Settings", a_key, a_value.c_str(), comment.c_str());
 		};
 
-#if F4R_HAS_MULTI
-		setEntry("iMethod", FormatInt(settings.iMethod),
-			"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
-			"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off");
-#endif
+		if constexpr (kBackendCount > 1) {
+			setEntry("iMethod", FormatInt(settings.iMethod),
+				"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
+				"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off");
+		}
 		setEntry("iQualityMode", FormatInt(settings.iQualityMode),
 			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
 			"; ENB forces Native");
 		setEntry("fSharpness", FormatFloat(settings.fSharpness),
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max");
-#if F4R_HAS_DLSS
-		setEntry("bEnableReflex", FormatBool(settings.bEnableReflex),
-			"; NVIDIA Reflex to reduce game latency");
-		setEntry("bReflexBoost", FormatBool(settings.bReflexBoost), nullptr);
-		setEntry("bReflexUseFPSLimit", FormatBool(settings.bReflexUseFPSLimit), nullptr);
-		setEntry("fReflexFPSLimit", FormatFloat(settings.fReflexFPSLimit), nullptr);
-#endif
+		if constexpr (kHasDLSS) {
+			setEntry("bEnableReflex", FormatBool(settings.bEnableReflex),
+				"; NVIDIA Reflex to reduce game latency");
+			setEntry("bReflexBoost", FormatBool(settings.bReflexBoost), nullptr);
+			setEntry("bReflexUseFPSLimit", FormatBool(settings.bReflexUseFPSLimit), nullptr);
+			setEntry("fReflexFPSLimit", FormatFloat(settings.fReflexFPSLimit), nullptr);
+		}
 		setEntry("fQualityScale", FormatFloat(settings.fQualityScale),
 			"; Quality mode resolution scales\n"
 			"; Ranging from 0.60 to 0.67");

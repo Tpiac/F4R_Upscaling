@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Common.hpp"
+
 #if F4R_HAS_STREAMLINE
 
 namespace F4R_Upscaling

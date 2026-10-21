@@ -88,15 +88,11 @@ namespace
 
 	int32_t GetConfiguredMode()
 	{
-#if F4R_HAS_DLSS && !F4R_HAS_FSR3 && !F4R_HAS_XESS
-		return static_cast<int32_t>(F4R_Upscaling::Method::DLSS);
-#elif !F4R_HAS_DLSS && F4R_HAS_FSR3 && !F4R_HAS_XESS
-		return static_cast<int32_t>(F4R_Upscaling::Method::FSR3);
-#elif !F4R_HAS_DLSS && !F4R_HAS_FSR3 && F4R_HAS_XESS
-		return static_cast<int32_t>(F4R_Upscaling::Method::XeSS);
-#else
-		return F4R_Upscaling::Config::GetSingleton().GetInt("Settings", "iMethod", F4R_DEFAULT_Method);
-#endif
+		if constexpr (F4R_Upscaling::kSoleBackend != F4R_Upscaling::Method::Off) {
+			return static_cast<int32_t>(F4R_Upscaling::kSoleBackend);
+		} else {
+			return F4R_Upscaling::Config::GetSingleton().GetInt("Settings", "iMethod", F4R_Upscaling::kDefaultMethod);
+		}
 	}
 
 	void LoadConfig()
