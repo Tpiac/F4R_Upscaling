@@ -1,7 +1,8 @@
-#include "PCH.hpp"
 #include "Config.hpp"
+#include "PCH.hpp"
 
 #include <format>
+#include <string>
 
 namespace F4R_Upscaling
 {
@@ -29,7 +30,7 @@ namespace F4R_Upscaling
 		return instance;
 	}
 
-	bool Config::Load(const std::string& a_path)
+	bool Config::Load(const std::filesystem::path& a_path)
 	{
 		m_ini.Reset();
 		m_ini.SetUnicode();
@@ -44,26 +45,34 @@ namespace F4R_Upscaling
 
 	bool Config::Reload()
 	{
-		if (m_path.empty()) return false;
+		if (m_path.empty()) {
+			return false;
+		}
 		return Load(m_path);
 	}
 
-	std::int32_t Config::GetInt(const char* a_section, const char* a_key, std::int32_t a_default) const
+	std::int32_t Config::GetInt(std::string_view a_section, std::string_view a_key, std::int32_t a_default) const
 	{
-		return static_cast<std::int32_t>(m_ini.GetLongValue(a_section, a_key, a_default));
+		const std::string section(a_section);
+		const std::string key(a_key);
+		return static_cast<std::int32_t>(m_ini.GetLongValue(section.c_str(), key.c_str(), a_default));
 	}
 
-	float Config::GetFloat(const char* a_section, const char* a_key, float a_default) const
+	float Config::GetFloat(std::string_view a_section, std::string_view a_key, float a_default) const
 	{
-		return static_cast<float>(m_ini.GetDoubleValue(a_section, a_key, a_default));
+		const std::string section(a_section);
+		const std::string key(a_key);
+		return static_cast<float>(m_ini.GetDoubleValue(section.c_str(), key.c_str(), a_default));
 	}
 
-	bool Config::GetBool(const char* a_section, const char* a_key, bool a_default) const
+	bool Config::GetBool(std::string_view a_section, std::string_view a_key, bool a_default) const
 	{
-		return m_ini.GetBoolValue(a_section, a_key, a_default);
+		const std::string section(a_section);
+		const std::string key(a_key);
+		return m_ini.GetBoolValue(section.c_str(), key.c_str(), a_default);
 	}
 
-	void Config::WriteDefaults(const std::string& a_path) const
+	void Config::WriteDefaults(const std::filesystem::path& a_path) const
 	{
 		const Settings settings{};
 
@@ -72,17 +81,17 @@ namespace F4R_Upscaling
 		ini.SetSpaces(false);
 
 		bool headerWritten = false;
-		const auto setEntry = [&](const char* a_key, const std::string& a_value, const char* a_comment) {
+		const auto setEntry = [&](std::string_view a_key, const std::string& a_value, std::string_view a_comment) {
 			if (headerWritten) {
-				ini.SetValue("Settings", a_key, a_value.c_str(), a_comment);
+				ini.SetValue("Settings", a_key.data(), a_value.c_str(), a_comment.empty() ? nullptr : a_comment.data());
 				return;
 			}
 			headerWritten = true;
 			std::string comment = "; Settings apply in-game without restarting\n";
-			if (a_comment) {
+			if (!a_comment.empty()) {
 				comment += a_comment;
 			}
-			ini.SetValue("Settings", a_key, a_value.c_str(), comment.c_str());
+			ini.SetValue("Settings", a_key.data(), a_value.c_str(), comment.c_str());
 		};
 
 		if constexpr (kBackendCount > 1) {
@@ -98,9 +107,9 @@ namespace F4R_Upscaling
 		if constexpr (kHasDLSS) {
 			setEntry("bEnableReflex", FormatBool(settings.bEnableReflex),
 				"; NVIDIA Reflex to reduce game latency");
-			setEntry("bReflexBoost", FormatBool(settings.bReflexBoost), nullptr);
-			setEntry("bReflexUseFPSLimit", FormatBool(settings.bReflexUseFPSLimit), nullptr);
-			setEntry("fReflexFPSLimit", FormatFloat(settings.fReflexFPSLimit), nullptr);
+			setEntry("bReflexBoost", FormatBool(settings.bReflexBoost), {});
+			setEntry("bReflexUseFPSLimit", FormatBool(settings.bReflexUseFPSLimit), {});
+			setEntry("fReflexFPSLimit", FormatFloat(settings.fReflexFPSLimit), {});
 		}
 		setEntry("fQualityScale", FormatFloat(settings.fQualityScale),
 			"; Quality mode resolution scales\n"

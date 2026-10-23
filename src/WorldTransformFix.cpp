@@ -1,5 +1,5 @@
-#include "PCH.hpp"
 #include "WorldTransformFix.hpp"
+#include "PCH.hpp"
 
 #include <atomic>
 
@@ -23,13 +23,14 @@ namespace F4R_Upscaling
 				static const RE::BSFixedString loadingMenu("LoadingMenu");
 
 				auto* ui = RE::UI::GetSingleton();
-				if (!ui) return false;
+				if (!ui) {
+					return false;
+				}
 
 				return ui->IsMenuOpen(loadingMenu).value_or(false);
 			}
 
-			using GetRenderPassesFunc = RE::BSShaderProperty::RenderPassArray* (*)(
-				RE::BSShaderProperty* a_property,
+			using GetRenderPassesFunc = RE::BSShaderProperty::RenderPassArray* (*)(RE::BSShaderProperty * a_property,
 				RE::BSGeometry* a_geometry,
 				std::uint32_t a_renderMode,
 				RE::BSShaderAccumulator* a_accumulator);
@@ -41,12 +42,7 @@ namespace F4R_Upscaling
 				std::uint32_t a_renderMode,
 				RE::BSShaderAccumulator* a_accumulator)
 			{
-				if (a_property && a_geometry &&
-					a_property->flags.any(
-						ShaderFlag::kLODObjects,
-						ShaderFlag::kLODLandscape,
-						ShaderFlag::kLODLandBlend,
-						ShaderFlag::kMultiTextureLandscape)) {
+				if (a_property && a_geometry && a_property->flags.any(ShaderFlag::kLODObjects, ShaderFlag::kLODLandscape, ShaderFlag::kLODLandBlend, ShaderFlag::kMultiTextureLandscape)) {
 					a_geometry->previousWorld = a_geometry->world;
 				}
 
@@ -55,7 +51,9 @@ namespace F4R_Upscaling
 
 			void SweepObject(RE::NiAVObject* a_object)
 			{
-				if (!a_object) return;
+				if (!a_object) {
+					return;
+				}
 
 				if (auto* node = a_object->AsNode()) {
 					for (auto& child : node->children) {
@@ -90,8 +88,12 @@ namespace F4R_Upscaling
 			}
 			g_loadingMenuWasOpen = loadingMenuOpen;
 
-			if (!g_sceneSweepPending.load(std::memory_order_relaxed)) return;
-			if (loadingMenuOpen) return;
+			if (!g_sceneSweepPending.load(std::memory_order_relaxed)) {
+				return;
+			}
+			if (loadingMenuOpen) {
+				return;
+			}
 
 			g_sceneSweepPending.store(false, std::memory_order_relaxed);
 

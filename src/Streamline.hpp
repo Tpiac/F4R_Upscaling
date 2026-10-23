@@ -1,12 +1,13 @@
 #pragma once
 
 #include "Common.hpp"
+#include "Platform.hpp"
 
 #if F4R_HAS_STREAMLINE
 
 namespace F4R_Upscaling
 {
-	using PFun_slSetTagForFrame = sl::Result(const sl::FrameToken&, const sl::ViewportHandle&, const sl::ResourceTag*, uint32_t, sl::CommandBuffer*);
+	using PFun_slSetTagForFrame = sl::Result(const sl::FrameToken&, const sl::ViewportHandle&, const sl::ResourceTag*, std::uint32_t, sl::CommandBuffer*);
 
 	struct Streamline
 	{
@@ -15,16 +16,16 @@ namespace F4R_Upscaling
 		bool featureReflex = false;
 		bool nvidiaAdapter = false;
 
-		HMODULE interposer = nullptr;
+		Platform::Library interposer;
 
 		sl::FrameToken* frameToken = nullptr;
-		uint64_t frameTokenFrame = UINT64_MAX;
+		std::uint64_t frameTokenFrame = UINT64_MAX;
 		sl::ViewportHandle viewport = sl::ViewportHandle(0);
 
 		bool reflexOptionsValid = false;
 		sl::ReflexMode reflexMode = sl::ReflexMode::eOff;
-		uint32_t reflexFrameLimitUs = 0;
-		uint32_t lastReflexFrame = UINT32_MAX;
+		std::uint32_t reflexFrameLimitUs = 0;
+		std::uint32_t lastReflexFrame = UINT32_MAX;
 
 		PFun_slInit* slInit = nullptr;
 		PFun_slIsFeatureSupported* slIsFeatureSupported = nullptr;
@@ -66,9 +67,9 @@ namespace F4R_Upscaling
 			ID3D11Resource* a_motionVectorsResource,
 			float a_jitterX,
 			float a_jitterY,
-			uint32_t a_renderWidth,
-			uint32_t a_renderHeight,
-			uint32_t a_qualityMode);
+			std::uint32_t a_renderWidth,
+			std::uint32_t a_renderHeight,
+			std::uint32_t a_qualityMode);
 
 	private:
 		Streamline() = default;

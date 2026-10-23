@@ -1,18 +1,23 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
-#include <string>
+#include <filesystem>
+#include <optional>
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <d3d11.h>
 #include <d3d12.h>
 
-#if !defined(F4R_HAS_DLSS) || !defined(F4R_HAS_FSR3) || !defined(F4R_HAS_XESS) || \
-	!defined(F4R_HAS_STREAMLINE) || !defined(F4R_DEFAULT_Method)
-	#error "Build configuration is missing: F4R_HAS_DLSS/F4R_HAS_FSR3/F4R_HAS_XESS/F4R_HAS_STREAMLINE/F4R_DEFAULT_Method (see CMakeLists.txt)"
+#if !defined(F4R_HAS_DLSS) || !defined(F4R_HAS_FSR3) || !defined(F4R_HAS_XESS) || !defined(F4R_HAS_STREAMLINE) || !defined(F4R_DEFAULT_Method)
+#error "Build configuration is missing: F4R_HAS_DLSS/F4R_HAS_FSR3/F4R_HAS_XESS/F4R_HAS_STREAMLINE/F4R_DEFAULT_Method (see CMakeLists.txt)"
 #endif
 
 #if F4R_HAS_DLSS && !F4R_HAS_STREAMLINE
-	#error "The DLSS backend requires Streamline"
+#error "The DLSS backend requires Streamline"
 #endif
 
 namespace RE::BSGraphics
@@ -41,10 +46,11 @@ namespace F4R_Upscaling
 	{
 		if (IsOG()) {
 			a_near = *reinterpret_cast<float*>(
-				REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0xe281 } }.GetAddress());
+				REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0xE281 } }.GetAddress());
 			a_far = *reinterpret_cast<float*>(
-				REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0xea19d } }.GetAddress());
-		} else {
+				REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0xEA19D } }.GetAddress());
+		}
+		else {
 			a_near = *reinterpret_cast<float*>(
 				REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x296532 } }.GetAddress());
 			a_far = *reinterpret_cast<float*>(
@@ -54,40 +60,40 @@ namespace F4R_Upscaling
 
 	inline float& GetDynWidthRatio(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
-		static const std::ptrdiff_t OG_OFFSET = 0xF88;
-		static const std::ptrdiff_t AE_OFFSET = 0xFB8;
+		static constexpr std::ptrdiff_t OG_OFFSET = 0xF88;
+		static constexpr std::ptrdiff_t AE_OFFSET = 0xFB8;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<float*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
 
 	inline float& GetDynHeightRatio(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
-		static const std::ptrdiff_t OG_OFFSET = 0xF8C;
-		static const std::ptrdiff_t AE_OFFSET = 0xFBC;
+		static constexpr std::ptrdiff_t OG_OFFSET = 0xF8C;
+		static constexpr std::ptrdiff_t AE_OFFSET = 0xFBC;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<float*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
 
 	inline bool& GetDynResActivated(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
-		static const std::ptrdiff_t OG_OFFSET = 0xFA8;
-		static const std::ptrdiff_t AE_OFFSET = 0xFE5;
+		static constexpr std::ptrdiff_t OG_OFFSET = 0xFA8;
+		static constexpr std::ptrdiff_t AE_OFFSET = 0xFE5;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
 
 	inline bool& GetUseDynViewportAsDefault(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
-		static const std::ptrdiff_t OG_OFFSET = 0xFA7;
-		static const std::ptrdiff_t AE_OFFSET = 0xFE4;
+		static constexpr std::ptrdiff_t OG_OFFSET = 0xFA7;
+		static constexpr std::ptrdiff_t AE_OFFSET = 0xFE4;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return *reinterpret_cast<bool*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
 
 	inline const std::uint32_t* GetRenderTargetIDs(RE::BSGraphics::RenderTargetManager& a_rtMgr)
 	{
-		static const std::ptrdiff_t OG_OFFSET = 0xDC4;
-		static const std::ptrdiff_t AE_OFFSET = 0xDF4;
+		static constexpr std::ptrdiff_t OG_OFFSET = 0xDC4;
+		static constexpr std::ptrdiff_t AE_OFFSET = 0xDF4;
 		std::ptrdiff_t off = (IsAE() || IsNG()) ? AE_OFFSET : OG_OFFSET;
 		return reinterpret_cast<const std::uint32_t*>(reinterpret_cast<std::uint8_t*>(&a_rtMgr) + off);
 	}
@@ -127,7 +133,7 @@ namespace F4R_Upscaling
 			kAmbientOcclusion = 37,
 			kAmbientOcclusionHalf = 39,
 			kMainVerticalBlur = 68,
-			kLuminanceDownscale = 70,
+			kLuminanceDownscale = 70
 		};
 	}
 
@@ -157,7 +163,7 @@ namespace F4R_Upscaling
 			kMainTemp = 4,
 			kGbufferNormal = 20,
 			kSSAOFinal = 25,
-			kMotionVectors = 29,
+			kMotionVectors = 29
 		};
 	}
 
@@ -165,11 +171,11 @@ namespace F4R_Upscaling
 	{
 		enum : std::uint32_t
 		{
-			kMain = 2,
+			kMain = 2
 		};
 	}
 
-	enum class Method: int32_t
+	enum class Method : std::int32_t
 	{
 		Off = 0,
 		FSR3 = 1,
@@ -181,18 +187,16 @@ namespace F4R_Upscaling
 	inline constexpr bool kHasFSR3 = F4R_HAS_FSR3 != 0;
 	inline constexpr bool kHasXeSS = F4R_HAS_XESS != 0;
 	inline constexpr int kBackendCount = (kHasDLSS ? 1 : 0) + (kHasFSR3 ? 1 : 0) + (kHasXeSS ? 1 : 0);
-	inline constexpr Method kSoleBackend = kBackendCount == 1
-		? (kHasDLSS ? Method::DLSS : (kHasFSR3 ? Method::FSR3 : Method::XeSS))
-		: Method::Off;
+	inline constexpr Method kSoleBackend = kBackendCount == 1 ? (kHasDLSS ? Method::DLSS : (kHasFSR3 ? Method::FSR3 : Method::XeSS)) : Method::Off;
 	inline constexpr int kDefaultMethod = F4R_DEFAULT_Method;
 
 	struct Settings
 	{
-		int32_t iMethod = kDefaultMethod;
+		std::int32_t iMethod = kDefaultMethod;
 
 		float fSharpness = 0.5f;
 		float fAnisotropicMipBias = -0.0001f;
-		int32_t iQualityMode = 0;
+		std::int32_t iQualityMode = 0;
 
 		float fQualityScale = 0.648f;
 		float fBalancedScale = 0.59f;
@@ -213,16 +217,24 @@ namespace F4R_Upscaling
 
 		~Texture2D()
 		{
-			if (uav) uav->Release();
-			if (srv) srv->Release();
-			if (rtv) rtv->Release();
-			if (resource) resource->Release();
+			if (uav) {
+				uav->Release();
+			}
+			if (srv) {
+				srv->Release();
+			}
+			if (rtv) {
+				rtv->Release();
+			}
+			if (resource) {
+				resource->Release();
+			}
 		}
 	};
 
 	struct SamplerStates
 	{
-		ID3D11SamplerState* a[320];
+		std::array<ID3D11SamplerState*, 320> a{};
 	};
 
 	struct SharedTexture2D
@@ -234,10 +246,18 @@ namespace F4R_Upscaling
 
 		~SharedTexture2D()
 		{
-			if (uav) uav->Release();
-			if (srv) srv->Release();
-			if (resource) resource->Release();
-			if (resource12) resource12->Release();
+			if (uav) {
+				uav->Release();
+			}
+			if (srv) {
+				srv->Release();
+			}
+			if (resource) {
+				resource->Release();
+			}
+			if (resource12) {
+				resource12->Release();
+			}
 		}
 	};
 }
@@ -251,30 +271,20 @@ void ExtractRealD3D11();
 
 namespace F4R_Upscaling
 {
-	inline std::string GetModuleDirectory()
+	inline std::optional<std::filesystem::file_time_type> GetFileWriteTime(const std::filesystem::path& a_path)
 	{
-		char buf[MAX_PATH] = {};
-		GetModuleFileNameA(GetModuleHandleA(F4R_MODULE_NAME), buf, MAX_PATH);
-		std::string path(buf);
-		return path.substr(0, path.rfind('\\') + 1);
-	}
+		std::error_code ec;
+		const auto writeTime = std::filesystem::last_write_time(a_path, ec);
+		if (ec) {
+			return std::nullopt;
+		}
 
-	inline std::string GetPluginINIPath()
-	{
-		return GetModuleDirectory() + F4R_MODULE_NAME + ".ini";
-	}
-
-	inline std::uint64_t GetFileWriteTime(const std::string& a_path)
-	{
-		WIN32_FILE_ATTRIBUTE_DATA attrs{};
-		if (!GetFileAttributesExA(a_path.c_str(), GetFileExInfoStandard, &attrs)) return 0;
-		return (static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwHighDateTime) << 32) |
-			static_cast<std::uint64_t>(attrs.ftLastWriteTime.dwLowDateTime);
+		return writeTime;
 	}
 
 	inline SamplerStates* GetGlobalSamplers()
 	{
-		std::uintptr_t id = IsOG() ? 0xad18ull : 0x294447ull;
+		std::uintptr_t id = IsOG() ? 0xAD18ull : 0x294447ull;
 		return reinterpret_cast<SamplerStates*>(
 			REL::Relocation<std::uintptr_t>{ REL::Id<>{ id } }.GetAddress());
 	}
@@ -282,14 +292,18 @@ namespace F4R_Upscaling
 	inline ID3D11Device* GetRenderer()
 	{
 		auto* rd = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rd) return nullptr;
+		if (!rd) {
+			return nullptr;
+		}
 		return (g_enbLoaded && g_realDevice) ? g_realDevice : reinterpret_cast<ID3D11Device*>(rd->device);
 	}
 
 	inline ID3D11DeviceContext* GetImmediateContext()
 	{
 		auto* rd = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rd) return nullptr;
+		if (!rd) {
+			return nullptr;
+		}
 		return (g_enbLoaded && g_realContext) ? g_realContext : reinterpret_cast<ID3D11DeviceContext*>(rd->context);
 	}
 }

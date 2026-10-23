@@ -1,8 +1,11 @@
-#include "PCH.hpp"
 #include "XeSS.hpp"
+#include "PCH.hpp"
 #include "Upscaling.hpp"
 
 #include <dxgi1_2.h>
+
+#include <filesystem>
+#include <string_view>
 
 #if F4R_HAS_XESS
 
@@ -26,26 +29,43 @@ namespace F4R_Upscaling
 			a_list->ResourceBarrier(1, &barrier);
 		}
 
-		const char* XeSSResultToString(xess_result_t a_result)
+		std::string_view XeSSResultToString(xess_result_t a_result)
 		{
 			switch (a_result) {
-			case XESS_RESULT_WARNING_NONEXISTING_FOLDER: return "WARNING_NONEXISTING_FOLDER";
-			case XESS_RESULT_WARNING_OLD_DRIVER: return "WARNING_OLD_DRIVER";
-			case XESS_RESULT_SUCCESS: return "SUCCESS";
-			case XESS_RESULT_ERROR_UNSUPPORTED_DEVICE: return "ERROR_UNSUPPORTED_DEVICE";
-			case XESS_RESULT_ERROR_UNSUPPORTED_DRIVER: return "ERROR_UNSUPPORTED_DRIVER";
-			case XESS_RESULT_ERROR_UNINITIALIZED: return "ERROR_UNINITIALIZED";
-			case XESS_RESULT_ERROR_INVALID_ARGUMENT: return "ERROR_INVALID_ARGUMENT";
-			case XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY: return "ERROR_DEVICE_OUT_OF_MEMORY";
-			case XESS_RESULT_ERROR_DEVICE: return "ERROR_DEVICE";
-			case XESS_RESULT_ERROR_NOT_IMPLEMENTED: return "ERROR_NOT_IMPLEMENTED";
-			case XESS_RESULT_ERROR_INVALID_CONTEXT: return "ERROR_INVALID_CONTEXT";
-			case XESS_RESULT_ERROR_OPERATION_IN_PROGRESS: return "ERROR_OPERATION_IN_PROGRESS";
-			case XESS_RESULT_ERROR_UNSUPPORTED: return "ERROR_UNSUPPORTED";
-			case XESS_RESULT_ERROR_CANT_LOAD_LIBRARY: return "ERROR_CANT_LOAD_LIBRARY";
-			case XESS_RESULT_ERROR_WRONG_CALL_ORDER: return "ERROR_WRONG_CALL_ORDER";
-			case XESS_RESULT_ERROR_UNKNOWN: return "ERROR_UNKNOWN";
-			default: return "UNKNOWN";
+				case XESS_RESULT_WARNING_NONEXISTING_FOLDER:
+					return "WARNING_NONEXISTING_FOLDER";
+				case XESS_RESULT_WARNING_OLD_DRIVER:
+					return "WARNING_OLD_DRIVER";
+				case XESS_RESULT_SUCCESS:
+					return "SUCCESS";
+				case XESS_RESULT_ERROR_UNSUPPORTED_DEVICE:
+					return "ERROR_UNSUPPORTED_DEVICE";
+				case XESS_RESULT_ERROR_UNSUPPORTED_DRIVER:
+					return "ERROR_UNSUPPORTED_DRIVER";
+				case XESS_RESULT_ERROR_UNINITIALIZED:
+					return "ERROR_UNINITIALIZED";
+				case XESS_RESULT_ERROR_INVALID_ARGUMENT:
+					return "ERROR_INVALID_ARGUMENT";
+				case XESS_RESULT_ERROR_DEVICE_OUT_OF_MEMORY:
+					return "ERROR_DEVICE_OUT_OF_MEMORY";
+				case XESS_RESULT_ERROR_DEVICE:
+					return "ERROR_DEVICE";
+				case XESS_RESULT_ERROR_NOT_IMPLEMENTED:
+					return "ERROR_NOT_IMPLEMENTED";
+				case XESS_RESULT_ERROR_INVALID_CONTEXT:
+					return "ERROR_INVALID_CONTEXT";
+				case XESS_RESULT_ERROR_OPERATION_IN_PROGRESS:
+					return "ERROR_OPERATION_IN_PROGRESS";
+				case XESS_RESULT_ERROR_UNSUPPORTED:
+					return "ERROR_UNSUPPORTED";
+				case XESS_RESULT_ERROR_CANT_LOAD_LIBRARY:
+					return "ERROR_CANT_LOAD_LIBRARY";
+				case XESS_RESULT_ERROR_WRONG_CALL_ORDER:
+					return "ERROR_WRONG_CALL_ORDER";
+				case XESS_RESULT_ERROR_UNKNOWN:
+					return "ERROR_UNKNOWN";
+				default:
+					return "UNKNOWN";
 			}
 		}
 	}
@@ -58,36 +78,32 @@ namespace F4R_Upscaling
 
 	bool XeSS::Load()
 	{
-		if (module) return true;
-		if (failed) return false;
+		if (module.IsValid()) {
+			return true;
+		}
+		if (failed) {
+			return false;
+		}
 
-		const std::string dir = GetModuleDirectory();
-		std::wstring dllPath(dir.begin(), dir.end());
-		dllPath += L"XeSS\\libxess.dll";
+		const std::filesystem::path dllPath = Platform::ModuleDirectory() / "XeSS" / "libxess.dll";
 
-		module = LoadLibraryW(dllPath.c_str());
-		if (!module) {
+		if (!module.Load(dllPath)) {
 			REX::LogCritical("Failed to load libxess.dll");
 			failed = true;
 			return false;
 		}
 
-		auto resolve = [&](const char* a_name) -> void* {
-			return GetProcAddress(module, a_name);
-		};
-
-		xessD3D12CreateContext = reinterpret_cast<PFun_xessD3D12CreateContext>(resolve("xessD3D12CreateContext"));
-		xessD3D12Init = reinterpret_cast<PFun_xessD3D12Init>(resolve("xessD3D12Init"));
-		xessD3D12Execute = reinterpret_cast<PFun_xessD3D12Execute>(resolve("xessD3D12Execute"));
-		xessDestroyContext = reinterpret_cast<PFun_xessDestroyContext>(resolve("xessDestroyContext"));
-		xessSetJitterScale = reinterpret_cast<PFun_xessSetJitterScale>(resolve("xessSetJitterScale"));
-		xessSetVelocityScale = reinterpret_cast<PFun_xessSetVelocityScale>(resolve("xessSetVelocityScale"));
-		xessIsOptimalDriver = reinterpret_cast<PFun_xessIsOptimalDriver>(resolve("xessIsOptimalDriver"));
+		xessD3D12CreateContext = module.Resolve<PFun_xessD3D12CreateContext>("xessD3D12CreateContext");
+		xessD3D12Init = module.Resolve<PFun_xessD3D12Init>("xessD3D12Init");
+		xessD3D12Execute = module.Resolve<PFun_xessD3D12Execute>("xessD3D12Execute");
+		xessDestroyContext = module.Resolve<PFun_xessDestroyContext>("xessDestroyContext");
+		xessSetJitterScale = module.Resolve<PFun_xessSetJitterScale>("xessSetJitterScale");
+		xessSetVelocityScale = module.Resolve<PFun_xessSetVelocityScale>("xessSetVelocityScale");
+		xessIsOptimalDriver = module.Resolve<PFun_xessIsOptimalDriver>("xessIsOptimalDriver");
 
 		if (!xessD3D12CreateContext || !xessD3D12Init || !xessD3D12Execute || !xessDestroyContext) {
 			REX::LogCritical("Failed to resolve XeSS exports");
-			FreeLibrary(module);
-			module = nullptr;
+			module.Unload();
 			failed = true;
 			return false;
 		}
@@ -133,7 +149,7 @@ namespace F4R_Upscaling
 		hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device));
 		adapter->Release();
 		if (FAILED(hr)) {
-			REX::LogWarning("D3D12CreateDevice failed hr=0x{:x}", static_cast<uint32_t>(hr));
+			REX::LogWarning("D3D12CreateDevice failed hr=0x{:x}", static_cast<std::uint32_t>(hr));
 			return false;
 		}
 
@@ -147,7 +163,7 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		for (uint32_t i = 0; i < 2; i++) {
+		for (std::uint32_t i = 0; i < 2; i++) {
 			if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])))) {
 				REX::LogWarning("CreateCommandAllocator failed");
 				return false;
@@ -172,14 +188,13 @@ namespace F4R_Upscaling
 		}
 
 		hr = device5->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence));
-		CloseHandle(sharedFenceHandle);
+		Platform::CloseNativeHandle(sharedFenceHandle);
 		if (FAILED(hr)) {
-			REX::LogWarning("OpenSharedFence failed hr=0x{:x}", static_cast<uint32_t>(hr));
+			REX::LogWarning("OpenSharedFence failed hr=0x{:x}", static_cast<std::uint32_t>(hr));
 			return false;
 		}
 
-		fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-		if (!fenceEvent) {
+		if (!fenceEvent.Create()) {
 			REX::LogWarning("CreateEvent failed");
 			return false;
 		}
@@ -188,9 +203,11 @@ namespace F4R_Upscaling
 		return true;
 	}
 
-	bool XeSS::CreateContext(uint32_t a_width, uint32_t a_height, int a_qualityMode)
+	bool XeSS::CreateContext(std::uint32_t a_width, std::uint32_t a_height, int a_qualityMode)
 	{
-		if (!device) return false;
+		if (!device) {
+			return false;
+		}
 
 		xess_result_t r = xessD3D12CreateContext(device, &context);
 		if (r != XESS_RESULT_SUCCESS) {
@@ -204,9 +221,15 @@ namespace F4R_Upscaling
 		}
 
 		xess_quality_settings_t quality = XESS_QUALITY_SETTING_AA;
-		if (a_qualityMode == 1) quality = XESS_QUALITY_SETTING_QUALITY;
-		else if (a_qualityMode == 2) quality = XESS_QUALITY_SETTING_BALANCED;
-		else if (a_qualityMode == 3) quality = XESS_QUALITY_SETTING_PERFORMANCE;
+		if (a_qualityMode == 1) {
+			quality = XESS_QUALITY_SETTING_QUALITY;
+		}
+		else if (a_qualityMode == 2) {
+			quality = XESS_QUALITY_SETTING_BALANCED;
+		}
+		else if (a_qualityMode == 3) {
+			quality = XESS_QUALITY_SETTING_PERFORMANCE;
+		}
 
 		xess_d3d12_init_params_t params{};
 		params.outputResolution = { a_width, a_height };
@@ -230,22 +253,20 @@ namespace F4R_Upscaling
 			xessSetJitterScale(context, 1.0f, 1.0f);
 		}
 
-		const char* qname = "Native";
-		if (quality == XESS_QUALITY_SETTING_QUALITY) qname = "Quality";
-		else if (quality == XESS_QUALITY_SETTING_BALANCED) qname = "Balanced";
-		else if (quality == XESS_QUALITY_SETTING_PERFORMANCE) qname = "Performance";
 		initialized = true;
 		return true;
 	}
 
 	void XeSS::DestroyContext()
 	{
-		if (!context) return;
+		if (!context) {
+			return;
+		}
 
-		if (commandQueue && fence && fenceEvent && fenceValue > 0) {
-			if (SUCCEEDED(fence->SetEventOnCompletion(fenceValue, fenceEvent)) &&
+		if (commandQueue && fence && fenceEvent.IsValid() && fenceValue > 0) {
+			if (SUCCEEDED(fence->SetEventOnCompletion(fenceValue, fenceEvent.Get())) &&
 				SUCCEEDED(commandQueue->Signal(fence, fenceValue))) {
-				WaitForSingleObject(fenceEvent, INFINITE);
+				fenceEvent.Wait();
 				fenceValue++;
 			}
 		}
@@ -259,14 +280,16 @@ namespace F4R_Upscaling
 
 	bool XeSS::CreateSharedTexture(
 		SharedTexture2D* a_out,
-		uint32_t a_width,
-		uint32_t a_height,
+		std::uint32_t a_width,
+		std::uint32_t a_height,
 		DXGI_FORMAT a_format,
-		uint32_t a_bindFlags,
+		std::uint32_t a_bindFlags,
 		DXGI_FORMAT a_srvFormat,
 		DXGI_FORMAT a_uavFormat)
 	{
-		if (!a_out || !device11 || !device) return false;
+		if (!a_out || !device11 || !device) {
+			return false;
+		}
 
 		D3D11_TEXTURE2D_DESC desc{};
 		desc.Width = a_width;
@@ -291,7 +314,7 @@ namespace F4R_Upscaling
 			HANDLE sharedHandle = nullptr;
 			if (SUCCEEDED(dxgiResource->CreateSharedHandle(nullptr, DXGI_SHARED_RESOURCE_READ | DXGI_SHARED_RESOURCE_WRITE, nullptr, &sharedHandle))) {
 				device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(&a_out->resource12));
-				CloseHandle(sharedHandle);
+				Platform::CloseNativeHandle(sharedHandle);
 			}
 			dxgiResource->Release();
 		}
@@ -324,7 +347,6 @@ namespace F4R_Upscaling
 		return true;
 	}
 
-
 	void XeSS::Execute(
 		SharedTexture2D* a_color,
 		SharedTexture2D* a_motionVectors,
@@ -332,15 +354,25 @@ namespace F4R_Upscaling
 		SharedTexture2D* a_output,
 		float a_jitterX,
 		float a_jitterY,
-		uint32_t a_width,
-		uint32_t a_height,
-		uint32_t a_resetHistory)
+		std::uint32_t a_width,
+		std::uint32_t a_height,
+		std::uint32_t a_resetHistory)
 	{
-		if (!initialized || !a_color || !a_motionVectors || !a_output) return;
-		if (!a_color->resource12 || !a_motionVectors->resource12 || !a_output->resource12) return;
-		if (!device || !commandQueue || !context4 || !d3d11Fence || !fence) return;
-		if (!commandAllocators[0] || !commandAllocators[1] || !commandLists[0] || !commandLists[1]) return;
-		if (!xessD3D12Execute) return;
+		if (!initialized || !a_color || !a_motionVectors || !a_output) {
+			return;
+		}
+		if (!a_color->resource12 || !a_motionVectors->resource12 || !a_output->resource12) {
+			return;
+		}
+		if (!device || !commandQueue || !context4 || !d3d11Fence || !fence) {
+			return;
+		}
+		if (!commandAllocators[0] || !commandAllocators[1] || !commandLists[0] || !commandLists[1]) {
+			return;
+		}
+		if (!xessD3D12Execute) {
+			return;
+		}
 
 		if (xessSetVelocityScale) {
 			float wantX = static_cast<float>(a_width);
@@ -352,12 +384,12 @@ namespace F4R_Upscaling
 			}
 		}
 
-		uint32_t idx = frameIndex;
+		std::uint32_t idx = frameIndex;
 		frameIndex ^= 1;
 
-		if (fence && fenceEvent && fence->GetCompletedValue() < allocatorFenceValue[idx]) {
-			fence->SetEventOnCompletion(allocatorFenceValue[idx], fenceEvent);
-			WaitForSingleObject(fenceEvent, INFINITE);
+		if (fence && fenceEvent.IsValid() && fence->GetCompletedValue() < allocatorFenceValue[idx]) {
+			fence->SetEventOnCompletion(allocatorFenceValue[idx], fenceEvent.Get());
+			fenceEvent.Wait();
 		}
 
 		context4->Signal(d3d11Fence, fenceValue);
@@ -410,8 +442,8 @@ namespace F4R_Upscaling
 
 		list->Close();
 
-		ID3D12CommandList* lists[] = { list };
-		commandQueue->ExecuteCommandLists(1, lists);
+		std::array<ID3D12CommandList*, 1> lists = { list };
+		commandQueue->ExecuteCommandLists(static_cast<UINT>(lists.size()), lists.data());
 
 		commandQueue->Signal(fence, fenceValue);
 		context4->Wait(d3d11Fence, fenceValue);
@@ -421,20 +453,41 @@ namespace F4R_Upscaling
 
 	void XeSS::TeardownD3D12()
 	{
-		if (fenceEvent) {
-			CloseHandle(fenceEvent);
-			fenceEvent = nullptr;
+		fenceEvent.Close();
+		if (d3d11Fence) {
+			d3d11Fence->Release();
+			d3d11Fence = nullptr;
 		}
-		if (d3d11Fence) { d3d11Fence->Release(); d3d11Fence = nullptr; }
-		if (fence) { fence->Release(); fence = nullptr; }
-		for (uint32_t i = 0; i < 2; i++) {
-			if (commandLists[i]) { commandLists[i]->Release(); commandLists[i] = nullptr; }
-			if (commandAllocators[i]) { commandAllocators[i]->Release(); commandAllocators[i] = nullptr; }
+		if (fence) {
+			fence->Release();
+			fence = nullptr;
 		}
-		if (commandQueue) { commandQueue->Release(); commandQueue = nullptr; }
-		if (device) { device->Release(); device = nullptr; }
-		if (context4) { context4->Release(); context4 = nullptr; }
-		if (device5) { device5->Release(); device5 = nullptr; }
+		for (std::uint32_t i = 0; i < 2; i++) {
+			if (commandLists[i]) {
+				commandLists[i]->Release();
+				commandLists[i] = nullptr;
+			}
+			if (commandAllocators[i]) {
+				commandAllocators[i]->Release();
+				commandAllocators[i] = nullptr;
+			}
+		}
+		if (commandQueue) {
+			commandQueue->Release();
+			commandQueue = nullptr;
+		}
+		if (device) {
+			device->Release();
+			device = nullptr;
+		}
+		if (context4) {
+			context4->Release();
+			context4 = nullptr;
+		}
+		if (device5) {
+			device5->Release();
+			device5 = nullptr;
+		}
 		device11 = nullptr;
 		fenceValue = 0;
 		frameIndex = 0;

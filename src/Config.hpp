@@ -1,10 +1,11 @@
 #pragma once
 
-#include <string>
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <string_view>
 
 #include <SimpleIni.h>
-
-#include "Common.hpp"
 
 namespace F4R_Upscaling
 {
@@ -20,23 +21,23 @@ namespace F4R_Upscaling
 		Config& operator=(const Config&) = delete;
 		~Config() = default;
 
-		bool Load(const std::string& a_path);
+		bool Load(const std::filesystem::path& a_path);
 		bool Reload();
 
 		[[nodiscard]] bool IsLoaded() const { return m_loaded; }
-		[[nodiscard]] const std::string& Path() const { return m_path; }
+		[[nodiscard]] const std::filesystem::path& Path() const { return m_path; }
 
-		void WriteDefaults(const std::string& a_path) const;
+		void WriteDefaults(const std::filesystem::path& a_path) const;
 
-		[[nodiscard]] std::int32_t GetInt(const char* a_section, const char* a_key, std::int32_t a_default) const;
-		[[nodiscard]] float GetFloat(const char* a_section, const char* a_key, float a_default) const;
-		[[nodiscard]] bool GetBool(const char* a_section, const char* a_key, bool a_default) const;
+		[[nodiscard]] std::int32_t GetInt(std::string_view a_section, std::string_view a_key, std::int32_t a_default) const;
+		[[nodiscard]] float GetFloat(std::string_view a_section, std::string_view a_key, float a_default) const;
+		[[nodiscard]] bool GetBool(std::string_view a_section, std::string_view a_key, bool a_default) const;
 
 	private:
 		Config() = default;
 
 		CSimpleIniA m_ini;
-		std::string m_path;
+		std::filesystem::path m_path;
 		bool m_loaded = false;
 	};
 }

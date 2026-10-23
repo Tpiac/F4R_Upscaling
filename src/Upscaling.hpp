@@ -1,12 +1,13 @@
 #pragma once
 
-#include <atomic>
+#include <array>
+#include <filesystem>
 #include <span>
 
 #include "Common.hpp"
 
 #if F4R_HAS_FSR3
-	#include "FidelityFX.hpp"
+#include "FidelityFX.hpp"
 #endif
 
 namespace F4R_Upscaling
@@ -61,7 +62,7 @@ namespace F4R_Upscaling
 		void RestoreAASettings();
 		void ReturnToVanilla();
 		void CheckResources();
-		void EnsureFlareResources(ID3D11Device* a_device, uint32_t a_width, uint32_t a_height);
+		void EnsureFlareResources(ID3D11Device* a_device, std::uint32_t a_width, std::uint32_t a_height);
 		void InvalidateFlareDepth();
 		void PollRuntimeSettings();
 		void RequestReset();
@@ -73,8 +74,8 @@ namespace F4R_Upscaling
 		void ReleaseHBAOCache();
 		void EnsureSharpenResources(
 			ID3D11Device* a_device,
-			uint32_t a_width,
-			uint32_t a_height,
+			std::uint32_t a_width,
+			std::uint32_t a_height,
 			DXGI_FORMAT a_backBufferFormat,
 			DXGI_FORMAT a_srvFormat);
 		void EnsureMotionVectorFixResources(ID3D11Device* a_device);
@@ -143,11 +144,11 @@ namespace F4R_Upscaling
 			ID3D11UnorderedAccessView* uaView = nullptr;
 		};
 
-		std::unique_ptr<Texture2D> hbaoTargets[kScaledTargetSpan];
-		HBAOSlot hbaoBackedUp[kScaledTargetSpan];
-		bool hbaoMapped[kScaledTargetSpan]{};
-		D3D11_TEXTURE2D_DESC hbaoFullDesc[kScaledTargetSpan]{};
-		RE::BSGraphics::RenderTargetProperties hbaoSavedMeta[kHBAOMetaCount];
+		std::array<std::unique_ptr<Texture2D>, kScaledTargetSpan> hbaoTargets{};
+		std::array<HBAOSlot, kScaledTargetSpan> hbaoBackedUp{};
+		std::array<bool, kScaledTargetSpan> hbaoMapped{};
+		std::array<D3D11_TEXTURE2D_DESC, kScaledTargetSpan> hbaoFullDesc{};
+		std::array<RE::BSGraphics::RenderTargetProperties, kHBAOMetaCount> hbaoSavedMeta{};
 		bool hbaoMetaHeld = false;
 		std::unique_ptr<Texture2D> hbaoDepth;
 		D3D11_TEXTURE2D_DESC hbaoDepthFullDesc{};
@@ -163,15 +164,15 @@ namespace F4R_Upscaling
 		float hbaoSavedHeightRatio = 1.0f;
 		bool hbaoCacheValid = false;
 
-		ID3D11SamplerState* biasedSamplerStates[320]{};
-		ID3D11SamplerState* originalSamplerStates[320]{};
+		std::array<ID3D11SamplerState*, 320> biasedSamplerStates{};
+		std::array<ID3D11SamplerState*, 320> originalSamplerStates{};
 		float cachedSamplerBias = 0.0f;
 		bool samplerCacheValid = false;
 
 		static constexpr std::uint32_t kProxyTargetCount = 24;
 		static constexpr std::uint32_t kProxyTargetMetaCount = 100;
 		static constexpr std::uint32_t kProxyLearnFrames = 30;
-		static constexpr std::uint32_t kProxyTargets[kProxyTargetCount] = {
+		static constexpr std::array<std::uint32_t, kProxyTargetCount> kProxyTargets = {
 			LogicalRenderTarget::kGbufferNormal,
 			LogicalRenderTarget::kGbufferMetadata,
 			LogicalRenderTarget::kGbufferMaterial,
@@ -197,14 +198,14 @@ namespace F4R_Upscaling
 			LogicalRenderTarget::kMainVerticalBlur,
 			LogicalRenderTarget::kHdrImagespaceAux,
 		};
-		static constexpr std::uint32_t kProxyCopyIn[] = {
+		static constexpr std::array<std::uint32_t, 4> kProxyCopyIn = {
 			LogicalRenderTarget::kRefractionNormal,
 			LogicalRenderTarget::kMainTemp,
 			LogicalRenderTarget::kMotionVectors,
 			LogicalRenderTarget::kHdrImagespaceAux,
 		};
-		static constexpr std::uint32_t kProxyMainTempOut[] = { LogicalRenderTarget::kMainTemp };
-		static constexpr std::uint32_t kProxyCompositeCopyIn[] = {
+		static constexpr std::array<std::uint32_t, 1> kProxyMainTempOut = { LogicalRenderTarget::kMainTemp };
+		static constexpr std::array<std::uint32_t, 12> kProxyCompositeCopyIn = {
 			LogicalRenderTarget::kGbufferNormal,
 			LogicalRenderTarget::kAmbientOcclusion,
 			LogicalRenderTarget::kGbufferMetadata,
@@ -218,19 +219,19 @@ namespace F4R_Upscaling
 			LogicalRenderTarget::kAmbientOcclusionHalf,
 			LogicalRenderTarget::kGbufferAlbedo,
 		};
-		static constexpr std::uint32_t kProxySSLRCopyIn[] = {
+		static constexpr std::array<std::uint32_t, 3> kProxySSLRCopyIn = {
 			LogicalRenderTarget::kGbufferNormal,
 			LogicalRenderTarget::kGbufferMetadata,
 			LogicalRenderTarget::kMain,
 		};
-		static constexpr std::uint32_t kProxySSLRCopyOut[] = {
+		static constexpr std::array<std::uint32_t, 2> kProxySSLRCopyOut = {
 			LogicalRenderTarget::kSSLRRayResult,
 			LogicalRenderTarget::kSSLRBlurV,
 		};
 
-		RE::BSGraphics::RenderTarget savedScaledTargets[kProxyTargetCount]{};
-		RE::BSGraphics::RenderTarget proxyScaledTargets[kProxyTargetCount]{};
-		RE::BSGraphics::RenderTargetProperties savedRenderTargetMeta[kProxyTargetMetaCount]{};
+		std::array<RE::BSGraphics::RenderTarget, kProxyTargetCount> savedScaledTargets{};
+		std::array<RE::BSGraphics::RenderTarget, kProxyTargetCount> proxyScaledTargets{};
+		std::array<RE::BSGraphics::RenderTargetProperties, kProxyTargetMetaCount> savedRenderTargetMeta{};
 		ID3D11RenderTargetView* savedPassRTV = nullptr;
 		ID3D11DepthStencilView* savedPassDSV = nullptr;
 		bool scaledTargetsOverridden = false;
@@ -267,7 +268,7 @@ namespace F4R_Upscaling
 
 		std::uint32_t depthOverrideFrame = 0;
 
-		ProxyPassProfile proxyPassProfiles[static_cast<std::size_t>(ProxyPass::Count)]{};
+		std::array<ProxyPassProfile, static_cast<std::size_t>(ProxyPass::Count)> proxyPassProfiles{};
 		std::uint32_t activeCopyInMask = 0;
 		std::uint32_t pendingObservedMask = 0;
 		ProxyPass activeProxyPass = ProxyPass::Count;
@@ -286,25 +287,25 @@ namespace F4R_Upscaling
 
 		Upscaling() = default;
 
-		std::uint64_t settingsIniWriteTime = 0;
+		std::filesystem::file_time_type settingsIniWriteTime{};
 		bool settingsIniHasTime = false;
 		bool fxaaStateSaved = false;
 		bool fxaaOriginalActive = false;
 		bool taaFlagSaved = false;
 		bool taaFlagOriginal = false;
 		bool resourcesCreated = false;
-		uint32_t cachedWidth = 0;
-		uint32_t cachedHeight = 0;
+		std::uint32_t cachedWidth = 0;
+		std::uint32_t cachedHeight = 0;
 		DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
-		int32_t cachedMethod = -1;
+		std::int32_t cachedMethod = -1;
 #if F4R_HAS_XESS
-		int32_t cachedQuality = -1;
+		std::int32_t cachedQuality = -1;
 #endif
 
 		int startupFrameGuard = 0;
 		bool initialized = false;
 		float prevScale = 1.0f;
-		int32_t lastWorkingMethod = static_cast<int32_t>(Method::FSR3);
+		std::int32_t lastWorkingMethod = static_cast<std::int32_t>(Method::FSR3);
 		bool dlssUnsupportedLogged = false;
 	};
 }

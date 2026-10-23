@@ -2,6 +2,7 @@
 #include "Upscaling.hpp"
 #include "WorldTransformFix.hpp"
 #include <Detours.h>
+#include <string_view>
 
 namespace
 {
@@ -21,15 +22,17 @@ namespace
 
 	inline std::uintptr_t ResolveAddr(std::uintptr_t a_ogRVA, std::uintptr_t a_aeID, std::ptrdiff_t a_aeSub)
 	{
-		if (IsAE() || IsNG())
+		if (IsAE() || IsNG()) {
 			return GetAEAddr(a_aeID, a_aeSub);
+		}
 		return GetOGAddr(a_ogRVA);
 	}
 
-	inline void LogHookResult(const char* a_name, std::uintptr_t a_original)
+	inline void LogHookResult(std::string_view a_name, std::uintptr_t a_original)
 	{
-		if (!a_original)
+		if (!a_original) {
 			REX::LogWarning("{} FAILED", a_name);
+		}
 	}
 
 	inline bool IsContainerMenuOpen()
@@ -121,7 +124,7 @@ namespace
 		}
 
 		constexpr auto fxVatsTarget = static_cast<std::size_t>(
-		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_VATS_TARGET);
+			RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_VATS_TARGET);
 		constexpr std::uint32_t kVatsStableFrames = 20;
 
 		bool deferred = false;
@@ -133,10 +136,11 @@ namespace
 				}
 			}
 			a_gate.fx12Stable = fx12 ?
-				(a_gate.fx12Stable < kVatsStableFrames ? a_gate.fx12Stable + 1 : kVatsStableFrames) :
-				0;
+									(a_gate.fx12Stable < kVatsStableFrames ? a_gate.fx12Stable + 1 : kVatsStableFrames) :
+									0;
 			deferred = a_gate.fx12Stable < kVatsStableFrames;
-		} else {
+		}
+		else {
 			a_gate.fx12Stable = 0;
 			deferred = false;
 		}
@@ -158,16 +162,22 @@ namespace
 	inline RE::ImageSpaceEffect* GetImageSpaceEffect(std::uint32_t a_index)
 	{
 		auto* ism = RE::ImageSpaceManager::GetSingleton();
-		if (!ism) return nullptr;
+		if (!ism) {
+			return nullptr;
+		}
 		using Index = decltype(ism->effectList)::size_type;
 		const auto index = static_cast<Index>(a_index);
-		if (index >= ism->effectList.size()) return nullptr;
+		if (index >= ism->effectList.size()) {
+			return nullptr;
+		}
 		return ism->effectList[index];
 	}
 
 	inline bool IsEffectActive(RE::ImageSpaceEffect* a_effect)
 	{
-		if (!a_effect) return false;
+		if (!a_effect) {
+			return false;
+		}
 		using IsActiveFunc = bool(RE::ImageSpaceEffect*);
 		constexpr std::size_t isActiveSlot = 8;
 		auto** vtable = *reinterpret_cast<void***>(a_effect);
@@ -185,8 +195,7 @@ namespace
 		float savedX = state.offsetX;
 		float savedY = state.offsetY;
 
-		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() ||
-			IsContainerMenuOpen() || VatsSplitDeferred(g_vatsSettle)) {
+		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() || IsContainerMenuOpen() || VatsSplitDeferred(g_vatsSettle)) {
 			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
 			state.offsetX = savedX;
 			state.offsetY = savedY;
@@ -341,8 +350,7 @@ namespace
 		auto& up = Upscaling::GetSingleton();
 		up.PopFlareDepth();
 		const bool dynLow = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
-		const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f &&
-			up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
+		const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f && up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
 		if (need) {
 			up.PushFlareDepth();
 		}
@@ -429,7 +437,8 @@ namespace F4R_Upscaling
 			std::uintptr_t vtableAddr;
 			if (IsAE() || IsNG()) {
 				vtableAddr = REL::Relocation{ REL::Id<>{ 0x1473CC } }.GetAddress();
-			} else {
+			}
+			else {
 				vtableAddr = REL::Relocation<std::uintptr_t>{ RE::VTABLE::ImageSpaceEffectTemporalAA[0] }.GetAddress();
 			}
 			auto result = Detours::X64::DetourVTable(vtableAddr, reinterpret_cast<std::uintptr_t>(&Hook_TAA_OffWhileUpsc), 8);
@@ -438,35 +447,35 @@ namespace F4R_Upscaling
 		}
 
 		{
-			auto addr = ResolveAddr(0x2857480 + 0x14b, 0x235FF1, 0x29F);
+			auto addr = ResolveAddr(0x2857480 + 0x14B, 0x235FF1, 0x29F);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_PreRender_UpdateUpscState));
 			g_originalPreRender_UpdateUpscState = reinterpret_cast<PreRender_UpdateUpscStateFunc*>(result);
 			LogHookResult("PreRender_UpdateUpscState", result);
 		}
 
 		{
-			auto addr = ResolveAddr(0x2857110 + 0xe1, 0x235FF2, 0xC5);
+			auto addr = ResolveAddr(0x2857110 + 0xE1, 0x235FF2, 0xC5);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_PostRender_UpscThenRestoreFullRes));
 			g_originalPostRender_UpscThenRestoreFullRes = reinterpret_cast<PostRender_UpscThenRestoreFullResFunc*>(result);
 			LogHookResult("PostRender_UpscThenRestoreFullRes", result);
 		}
 
 		{
-			auto addr = ResolveAddr(0x2857480 + 0x17f, 0x235FF1, 0x2E3);
+			auto addr = ResolveAddr(0x2857480 + 0x17F, 0x235FF1, 0x2E3);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SamplerState_OverrideMipBias));
 			g_originalSamplerState_OverrideMipBias = reinterpret_cast<SamplerState_OverrideMipBiasFunc*>(result);
 			LogHookResult("SamplerState_OverrideMipBias", result);
 		}
 
 		{
-			auto addr = ResolveAddr(0x2857480 + 0x1c9, 0x235FF1, 0x3A6);
+			auto addr = ResolveAddr(0x2857480 + 0x1C9, 0x235FF1, 0x3A6);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_SamplerState_RestoreMipBias));
 			g_originalSamplerState_RestoreMipBias = reinterpret_cast<SamplerState_RestoreMipBiasFunc*>(result);
 			LogHookResult("SamplerState_RestoreMipBias", result);
 		}
 
 		{
-			auto addr = ResolveAddr(0x2857110 + 0x9f, 0x235FF2, 0x83);
+			auto addr = ResolveAddr(0x2857110 + 0x9F, 0x235FF2, 0x83);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_Effects_PreserveJitter));
 			g_originalEffects_PreserveJitter = reinterpret_cast<Effects_PreserveJitterFunc*>(result);
 			LogHookResult("Effects_PreserveJitter", result);
@@ -504,7 +513,7 @@ namespace F4R_Upscaling
 		}
 
 		{
-			auto addr = ResolveAddr(0x1297BE0 + 0x2bd, 0x225209, 0x275);
+			auto addr = ResolveAddr(0x1297BE0 + 0x2BD, 0x225209, 0x275);
 			auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_Loading_ResetDynamicResolution));
 			g_originalLoading_ResetDynamicResolution = reinterpret_cast<Loading_ResetDynamicResolutionFunc*>(result);
 			LogHookResult("Loading_ResetDynamicResolution", result);
@@ -521,7 +530,8 @@ namespace F4R_Upscaling
 			std::uintptr_t addr;
 			if (IsAE() || IsNG()) {
 				addr = REL::Relocation{ REL::Id<>{ 2317547 } }.GetAddress();
-			} else {
+			}
+			else {
 				addr = REL::Relocation{ REL::Id<>{ 676108 } }.GetAddress();
 			}
 			auto result = Detours::X64::DetourFunction(addr, reinterpret_cast<std::uintptr_t>(&Hook_LensFlare_ForceFullResDepth));
@@ -538,7 +548,8 @@ namespace F4R_Upscaling
 					g_originalVatsTarget_SetPixelConstant = reinterpret_cast<VatsTarget_SetPixelConstantFunc*>(result);
 					vatsHooked = (result != 0);
 				}
-			} else {
+			}
+			else {
 				auto addr = REL::Relocation{ REL::Id<>{ 0xFE897 } }.GetAddress() + 0xBB;
 				if (*reinterpret_cast<std::uint8_t*>(addr) == 0xE8) {
 					auto result = REL::GetTrampoline()->WriteCall5(addr, reinterpret_cast<std::uintptr_t>(&Hook_VatsTarget_SetPixelConstant));
@@ -594,4 +605,3 @@ namespace F4R_Upscaling
 		}
 	}
 }
-

@@ -2,6 +2,8 @@
 
 #include "Common.hpp"
 
+#include <vector>
+
 #if F4R_HAS_FSR3
 
 namespace F4R_Upscaling
@@ -9,7 +11,7 @@ namespace F4R_Upscaling
 	struct FidelityFX
 	{
 		FfxFsr3Context fsrContext{};
-		void* fsrScratchBuffer = nullptr;
+		std::vector<std::byte> fsrScratchBuffer;
 		FfxInterface backendInterface{};
 
 		FidelityFX() = default;
@@ -20,16 +22,16 @@ namespace F4R_Upscaling
 
 		bool CreateFSRResources(
 			ID3D11Device* device,
-			uint32_t backBufferWidth,
-			uint32_t backBufferHeight,
+			std::uint32_t backBufferWidth,
+			std::uint32_t backBufferHeight,
 			DXGI_FORMAT backBufferFormat);
 
 		void Apply(
 			ID3D11Texture2D* texture,
 			float jitterX,
 			float jitterY,
-			uint32_t renderWidth,
-			uint32_t renderHeight);
+			std::uint32_t renderWidth,
+			std::uint32_t renderHeight);
 	};
 }
 #endif

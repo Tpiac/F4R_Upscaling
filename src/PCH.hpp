@@ -14,8 +14,7 @@
 #endif
 
 #if F4R_HAS_FSR3
-// FSR3 SDK
-#include <FidelityFX/host/ffx_fsr3.h>
 #include <FidelityFX/host/backends/dx11/ffx_dx11.h>
+#include <FidelityFX/host/ffx_fsr3.h>
 #endif
 // IWYU pragma: end_exports

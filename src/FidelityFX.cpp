@@ -1,5 +1,5 @@
-#include "PCH.hpp"
 #include "FidelityFX.hpp"
+#include "PCH.hpp"
 #include "Upscaling.hpp"
 
 #include <cmath>
@@ -12,10 +12,6 @@ namespace F4R_Upscaling
 {
 	namespace
 	{
-		bool s_frameTimerInitialized = false;
-		LARGE_INTEGER s_frequency = { 0 };
-		LARGE_INTEGER s_lastFrameTime = { 0 };
-
 		void FfxResourceFromDX11Texture(
 			FfxResource& res,
 			ID3D11Resource* texture)
@@ -43,41 +39,41 @@ namespace F4R_Upscaling
 
 	FidelityFX::~FidelityFX()
 	{
-		if (fsrScratchBuffer) {
+		if (!fsrScratchBuffer.empty()) {
 			ffxFsr3ContextDestroy(&fsrContext);
-			std::free(fsrScratchBuffer);
-			fsrScratchBuffer = nullptr;
+			fsrScratchBuffer.clear();
+			fsrScratchBuffer.shrink_to_fit();
 		}
 	}
 
 	bool FidelityFX::CreateFSRResources(
 		ID3D11Device* device,
-		uint32_t backBufferWidth,
-		uint32_t backBufferHeight,
+		std::uint32_t backBufferWidth,
+		std::uint32_t backBufferHeight,
 		DXGI_FORMAT backBufferFormat)
 	{
-		if (fsrScratchBuffer) {
+		if (!fsrScratchBuffer.empty()) {
 			REX::LogWarning("CreateFSRResources: already created, skipping");
 			return true;
 		}
 
 		size_t scratchSize = ffxGetScratchMemorySizeDX11(FFX_FSR3UPSCALER_CONTEXT_COUNT);
-		fsrScratchBuffer = std::calloc(scratchSize, 1);
-		if (!fsrScratchBuffer) {
-			REX::LogError("CreateFSRResources: calloc failed");
+		fsrScratchBuffer.assign(scratchSize, std::byte{ 0 });
+		if (fsrScratchBuffer.empty() && scratchSize > 0) {
+			REX::LogError("CreateFSRResources: allocation failed");
 			return false;
 		}
 
 		FfxErrorCode err = ffxGetInterfaceDX11(
 			&backendInterface,
 			reinterpret_cast<FfxDevice>(device),
-			fsrScratchBuffer,
+			fsrScratchBuffer.data(),
 			scratchSize,
 			FFX_FSR3UPSCALER_CONTEXT_COUNT);
 		if (err != FFX_OK) {
 			REX::LogError("CreateFSRResources: ffxGetInterfaceDX11 failed error={}", static_cast<int>(err));
-			std::free(fsrScratchBuffer);
-			fsrScratchBuffer = nullptr;
+			fsrScratchBuffer.clear();
+			fsrScratchBuffer.shrink_to_fit();
 			return false;
 		}
 
@@ -96,18 +92,18 @@ namespace F4R_Upscaling
 		if (err != FFX_OK) {
 			REX::LogError("CreateFSRResources: ffxFsr3ContextCreate failed error={} (0x{:x})",
 				static_cast<int>(err), static_cast<int>(err));
-			std::free(fsrScratchBuffer);
-			fsrScratchBuffer = nullptr;
+			fsrScratchBuffer.clear();
+			fsrScratchBuffer.shrink_to_fit();
 			return false;
 		}
 
-		const std::pair<FfxFsr3UpscalerConfigureKey, float> upscalerConstants[] = {
+		const std::array<std::pair<FfxFsr3UpscalerConfigureKey, float>, 5> upscalerConstants = { {
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, 1.0f },
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE, 1.0f },
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE, 1.0f },
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME, 0.333f },
 			{ FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION, -0.333f },
-		};
+		} };
 		for (const auto& [key, value] : upscalerConstants) {
 			ffxFsr3SetUpscalerConstant(&fsrContext, key, const_cast<float*>(&value));
 		}
@@ -119,33 +115,23 @@ namespace F4R_Upscaling
 		ID3D11Texture2D* texture,
 		float jitterX,
 		float jitterY,
-		uint32_t renderWidth,
-		uint32_t renderHeight)
+		std::uint32_t renderWidth,
+		std::uint32_t renderHeight)
 	{
 		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
-		if (!rendererData) return;
+		if (!rendererData) {
+			return;
+		}
 
 		auto* ctx = GetImmediateContext();
-		if (!ctx) return;
+		if (!ctx) {
+			return;
+		}
 
 		auto& aa = Upscaling::GetSingleton();
 
-		if (!s_frameTimerInitialized) {
-			QueryPerformanceFrequency(&s_frequency);
-			QueryPerformanceCounter(&s_lastFrameTime);
-			s_frameTimerInitialized = true;
-		}
-
-		LARGE_INTEGER currentTime;
-		QueryPerformanceCounter(&currentTime);
-		float frameTimeDelta = static_cast<float>(currentTime.QuadPart - s_lastFrameTime.QuadPart)
-			/ static_cast<float>(s_frequency.QuadPart) * 1000.0f;
-		s_lastFrameTime = currentTime;
-		if (frameTimeDelta < 0.0f || frameTimeDelta > 1000.0f) {
-			frameTimeDelta = 16.666f;
-		} else if (frameTimeDelta > 50.0f) {
-			frameTimeDelta = 33.333f;
-		}
+		const auto* timer = RE::BSTimer::GetSingleton();
+		const float frameTimeDelta = timer ? timer->realTimeDelta * 1000.0f : 0.0f;
 
 		FfxResource colorResource;
 		FfxResourceFromDX11Texture(colorResource, reinterpret_cast<ID3D11Resource*>(texture));
@@ -157,7 +143,8 @@ namespace F4R_Upscaling
 			if (depthResource.description.format == FFX_SURFACE_FORMAT_R32_UINT) {
 				depthResource.description.format = FFX_SURFACE_FORMAT_R32_FLOAT;
 			}
-		} else {
+		}
+		else {
 			auto* depthSRV = reinterpret_cast<ID3D11ShaderResourceView*>(rendererData->depthStencilTargets[DepthStencil::kMain].srViewDepth);
 			if (depthSRV) {
 				ID3D11Resource* depthRes = nullptr;
@@ -181,7 +168,8 @@ namespace F4R_Upscaling
 		auto* mvTexture = reinterpret_cast<ID3D11Resource*>(rendererData->renderTargets[RenderTarget::kMotionVectors].texture);
 		if (mvTexture) {
 			FfxResourceFromDX11Texture(mvResource, mvTexture);
-		} else {
+		}
+		else {
 			auto* mvSRV = reinterpret_cast<ID3D11ShaderResourceView*>(rendererData->renderTargets[RenderTarget::kMotionVectors].srView);
 			if (mvSRV) {
 				ID3D11Resource* mvRes = nullptr;
@@ -237,7 +225,7 @@ namespace F4R_Upscaling
 		dispatch.upscaleSize.width = fsrState.screenWidth;
 		dispatch.upscaleSize.height = fsrState.screenHeight;
 		dispatch.flags = 0;
-		dispatch.frameID = static_cast<uint64_t>(RE::BSGraphics::State::GetSingleton().frameCount);
+		dispatch.frameID = static_cast<std::uint64_t>(RE::BSGraphics::State::GetSingleton().frameCount);
 
 		FfxErrorCode err = ffxFsr3ContextDispatchUpscale(&fsrContext, &dispatch);
 		if (err != FFX_OK) {
@@ -250,11 +238,11 @@ namespace F4R_Upscaling
 		}
 
 		ID3D11Buffer* nullCB = nullptr;
-		ID3D11UnorderedAccessView* nullUAVs[8] = {};
-		ID3D11ShaderResourceView* nullSRVs[16] = {};
+		std::array<ID3D11UnorderedAccessView*, 8> nullUAVs{};
+		std::array<ID3D11ShaderResourceView*, 16> nullSRVs{};
 		ctx->CSSetConstantBuffers(0, 1, &nullCB);
-		ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
-		ctx->CSSetShaderResources(0, 16, nullSRVs);
+		ctx->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullUAVs.size()), nullUAVs.data(), nullptr);
+		ctx->CSSetShaderResources(0, static_cast<UINT>(nullSRVs.size()), nullSRVs.data());
 		ctx->CSSetShader(nullptr, nullptr, 0);
 
 		aa.resetHistory = false;

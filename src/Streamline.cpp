@@ -1,5 +1,5 @@
-#include "PCH.hpp"
 #include "Streamline.hpp"
+#include "PCH.hpp"
 #include "Upscaling.hpp"
 
 #include <cmath>
@@ -20,14 +20,14 @@ namespace F4R_Upscaling
 		void SLLogCallback(sl::LogType a_type, const char* a_msg)
 		{
 			switch (a_type) {
-			case sl::LogType::eError:
-				REX::LogError("[SL]: {}", a_msg);
-				break;
-			case sl::LogType::eWarn:
-				REX::LogWarning("[SL]: {}", a_msg);
-				break;
-			default:
-				break;
+				case sl::LogType::eError:
+					REX::LogError("[SL]: {}", a_msg);
+					break;
+				case sl::LogType::eWarn:
+					REX::LogWarning("[SL]: {}", a_msg);
+					break;
+				default:
+					break;
 			}
 		}
 
@@ -49,9 +49,8 @@ namespace F4R_Upscaling
 
 	void Streamline::LoadInterposer()
 	{
-		interposer = LoadLibraryW(L"Data/F4SE/Plugins/Streamline/sl.interposer.dll");
-		if (!interposer) {
-			REX::LogCritical("Failed to load interposer: Error Code {0:x}", GetLastError());
+		if (!interposer.Load(L"Data/F4SE/Plugins/Streamline/sl.interposer.dll")) {
+			REX::LogCritical("Failed to load interposer: Error Code {0:x}", Platform::LastErrorCode());
 		}
 	}
 
@@ -59,34 +58,30 @@ namespace F4R_Upscaling
 	{
 		REX::LogInformation("Streamline: Initializing");
 
-		if (!interposer) {
+		if (!interposer.IsValid()) {
 			REX::LogCritical("Streamline: initialize failed interposer not loaded");
 			return;
 		}
 
-		auto resolve = [&](const char* name) -> void* {
-			return GetProcAddress(interposer, name);
-		};
-
-		slInit = reinterpret_cast<PFun_slInit*>(resolve("slInit"));
-		slIsFeatureSupported = reinterpret_cast<PFun_slIsFeatureSupported*>(resolve("slIsFeatureSupported"));
-		slIsFeatureLoaded = reinterpret_cast<PFun_slIsFeatureLoaded*>(resolve("slIsFeatureLoaded"));
-		slSetFeatureLoaded = reinterpret_cast<PFun_slSetFeatureLoaded*>(resolve("slSetFeatureLoaded"));
-		slEvaluateFeature = reinterpret_cast<PFun_slEvaluateFeature*>(resolve("slEvaluateFeature"));
-		slSetTagForFrame = reinterpret_cast<PFun_slSetTagForFrame*>(resolve("slSetTagForFrame"));
-		slGetFeatureRequirements = reinterpret_cast<PFun_slGetFeatureRequirements*>(resolve("slGetFeatureRequirements"));
-		slUpgradeInterface = reinterpret_cast<PFun_slUpgradeInterface*>(resolve("slUpgradeInterface"));
-		slSetConstants = reinterpret_cast<PFun_slSetConstants*>(resolve("slSetConstants"));
-		slGetFeatureFunction = reinterpret_cast<PFun_slGetFeatureFunction*>(resolve("slGetFeatureFunction"));
-		slGetNewFrameToken = reinterpret_cast<PFun_slGetNewFrameToken*>(resolve("slGetNewFrameToken"));
-		slSetD3DDevice = reinterpret_cast<PFun_slSetD3DDevice*>(resolve("slSetD3DDevice"));
+		slInit = interposer.Resolve<PFun_slInit*>("slInit");
+		slIsFeatureSupported = interposer.Resolve<PFun_slIsFeatureSupported*>("slIsFeatureSupported");
+		slIsFeatureLoaded = interposer.Resolve<PFun_slIsFeatureLoaded*>("slIsFeatureLoaded");
+		slSetFeatureLoaded = interposer.Resolve<PFun_slSetFeatureLoaded*>("slSetFeatureLoaded");
+		slEvaluateFeature = interposer.Resolve<PFun_slEvaluateFeature*>("slEvaluateFeature");
+		slSetTagForFrame = interposer.Resolve<PFun_slSetTagForFrame*>("slSetTagForFrame");
+		slGetFeatureRequirements = interposer.Resolve<PFun_slGetFeatureRequirements*>("slGetFeatureRequirements");
+		slUpgradeInterface = interposer.Resolve<PFun_slUpgradeInterface*>("slUpgradeInterface");
+		slSetConstants = interposer.Resolve<PFun_slSetConstants*>("slSetConstants");
+		slGetFeatureFunction = interposer.Resolve<PFun_slGetFeatureFunction*>("slGetFeatureFunction");
+		slGetNewFrameToken = interposer.Resolve<PFun_slGetNewFrameToken*>("slGetNewFrameToken");
+		slSetD3DDevice = interposer.Resolve<PFun_slSetD3DDevice*>("slSetD3DDevice");
 
 		if (!slInit) {
 			REX::LogCritical("slInit not found in interposer");
 			return;
 		}
 
-		static const sl::Feature kFeatures[] = { sl::kFeatureDLSS, sl::kFeaturePCL, sl::kFeatureReflex };
+		static const std::array<sl::Feature, 3> kFeatures = { sl::kFeatureDLSS, sl::kFeaturePCL, sl::kFeatureReflex };
 
 		sl::Preferences pref{};
 		pref.showConsole = false;
@@ -98,10 +93,10 @@ namespace F4R_Upscaling
 		pref.releaseCallback = nullptr;
 		pref.logMessageCallback = &SLLogCallback;
 		pref.flags = sl::PreferenceFlags::eUseManualHooking |
-			sl::PreferenceFlags::eDisableCLStateTracking |
-			sl::PreferenceFlags::eUseFrameBasedResourceTagging;
-		pref.featuresToLoad = kFeatures;
-		pref.numFeaturesToLoad = sizeof(kFeatures) / sizeof(kFeatures[0]);
+					 sl::PreferenceFlags::eDisableCLStateTracking |
+					 sl::PreferenceFlags::eUseFrameBasedResourceTagging;
+		pref.featuresToLoad = kFeatures.data();
+		pref.numFeaturesToLoad = static_cast<std::uint32_t>(kFeatures.size());
 		pref.applicationId = 0;
 		pref.engine = sl::EngineType::eCustom;
 		pref.engineVersion = "1.0.0";
@@ -112,7 +107,8 @@ namespace F4R_Upscaling
 		if (result == sl::Result::eOk) {
 			initialized = true;
 			REX::LogInformation("Streamline: initialized");
-		} else {
+		}
+		else {
 			REX::LogCritical("Streamline: failed to initialize (result={})", static_cast<int>(result));
 		}
 	}
@@ -130,7 +126,7 @@ namespace F4R_Upscaling
 		a_adapter->GetDesc(&desc);
 
 		sl::AdapterInfo adapterInfo{};
-		adapterInfo.deviceLUID = reinterpret_cast<uint8_t*>(&desc.AdapterLuid);
+		adapterInfo.deviceLUID = reinterpret_cast<std::uint8_t*>(&desc.AdapterLuid);
 		adapterInfo.deviceLUIDSizeInBytes = sizeof(desc.AdapterLuid);
 		adapterInfo.vkPhysicalDevice = nullptr;
 
@@ -184,7 +180,8 @@ namespace F4R_Upscaling
 			bound &= slGetFeatureFunction(sl::kFeatureReflex, "slReflexSleep", reinterpret_cast<void*&>(slReflexSleep)) == sl::Result::eOk;
 			featureReflex = bound && slReflexSetOptions && slReflexSleep;
 			REX::LogInformation("Streamline: Reflex {}", featureReflex ? "initialized" : "not initialized");
-		} else {
+		}
+		else {
 			REX::LogInformation("Streamline: Reflex is not available");
 		}
 	}
@@ -221,9 +218,7 @@ namespace F4R_Upscaling
 		GetCameraNearFar(cameraNear, cameraFar);
 		constants.cameraNear = cameraNear;
 		constants.cameraFar = cameraFar;
-		constants.cameraAspectRatio = (state.screenHeight != 0)
-			? static_cast<float>(state.screenWidth) / static_cast<float>(state.screenHeight)
-			: 1.0f;
+		constants.cameraAspectRatio = (state.screenHeight != 0) ? static_cast<float>(state.screenWidth) / static_cast<float>(state.screenHeight) : 1.0f;
 		constants.cameraFOV = 2.0f * std::atan(1.0f / constants.cameraViewToClip[1].y);
 
 		constants.cameraMotionIncluded = sl::Boolean::eTrue;
@@ -256,12 +251,14 @@ namespace F4R_Upscaling
 
 	bool Streamline::AcquireFrameToken()
 	{
-		if (!slGetNewFrameToken)
+		if (!slGetNewFrameToken) {
 			return false;
+		}
 
 		auto& state = RE::BSGraphics::State::GetSingleton();
-		if (frameToken && frameTokenFrame == state.frameCount)
+		if (frameToken && frameTokenFrame == state.frameCount) {
 			return true;
+		}
 
 		sl::Result res = slGetNewFrameToken(frameToken, nullptr);
 		if (res != sl::Result::eOk) {
@@ -276,18 +273,20 @@ namespace F4R_Upscaling
 
 	void Streamline::UpdateLatency()
 	{
-		if (!initialized || !featureReflex || !slReflexSetOptions || !slReflexSleep)
+		if (!initialized || !featureReflex || !slReflexSetOptions || !slReflexSleep) {
 			return;
+		}
 
 		auto& aa = Upscaling::GetSingleton();
 
 		sl::ReflexMode mode = sl::ReflexMode::eOff;
-		uint32_t frameLimitUs = 0;
+		std::uint32_t frameLimitUs = 0;
 
 		if (aa.settings.bEnableReflex && aa.upsclEnabled) {
 			mode = aa.settings.bReflexBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
-			if (aa.settings.bReflexUseFPSLimit)
-				frameLimitUs = static_cast<uint32_t>(1000000.0f / aa.settings.fReflexFPSLimit + 0.5f);
+			if (aa.settings.bReflexUseFPSLimit) {
+				frameLimitUs = static_cast<std::uint32_t>(1000000.0f / aa.settings.fReflexFPSLimit + 0.5f);
+			}
 		}
 
 		if (!reflexOptionsValid || reflexMode != mode || reflexFrameLimitUs != frameLimitUs) {
@@ -303,12 +302,14 @@ namespace F4R_Upscaling
 			reflexFrameLimitUs = frameLimitUs;
 		}
 
-		if (mode == sl::ReflexMode::eOff && frameLimitUs == 0)
+		if (mode == sl::ReflexMode::eOff && frameLimitUs == 0) {
 			return;
+		}
 
 		auto& state = RE::BSGraphics::State::GetSingleton();
-		if (lastReflexFrame == state.frameCount)
+		if (lastReflexFrame == state.frameCount) {
 			return;
+		}
 		lastReflexFrame = state.frameCount;
 
 		if (AcquireFrameToken()) {
@@ -326,9 +327,9 @@ namespace F4R_Upscaling
 		ID3D11Resource* a_motionVectorsResource,
 		float a_jitterX,
 		float a_jitterY,
-		uint32_t a_renderWidth,
-		uint32_t a_renderHeight,
-		uint32_t a_qualityMode)
+		std::uint32_t a_renderWidth,
+		std::uint32_t a_renderHeight,
+		std::uint32_t a_qualityMode)
 	{
 		if (!AcquireFrameToken()) {
 			static bool tokenLogged = false;
@@ -345,20 +346,28 @@ namespace F4R_Upscaling
 		auto& state = RE::BSGraphics::State::GetSingleton();
 
 		auto* ctx = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
-		if (!ctx) return;
+		if (!ctx) {
+			return;
+		}
 
 		sl::DLSSMode mode = sl::DLSSMode::eDLAA;
-		if (a_qualityMode == 1) mode = sl::DLSSMode::eMaxQuality;
-		else if (a_qualityMode == 2) mode = sl::DLSSMode::eBalanced;
-		else if (a_qualityMode == 3) mode = sl::DLSSMode::eMaxPerformance;
+		if (a_qualityMode == 1) {
+			mode = sl::DLSSMode::eMaxQuality;
+		}
+		else if (a_qualityMode == 2) {
+			mode = sl::DLSSMode::eBalanced;
+		}
+		else if (a_qualityMode == 3) {
+			mode = sl::DLSSMode::eMaxPerformance;
+		}
 
 		bool isHDR = false;
 		if (a_colorSRV) {
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			a_colorSRV->GetDesc(&srvDesc);
 			isHDR = srvDesc.Format == DXGI_FORMAT_R11G11B10_FLOAT ||
-				srvDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-				srvDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+					srvDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
+					srvDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
 		}
 
 		sl::DLSSOptions options{};
@@ -394,7 +403,7 @@ namespace F4R_Upscaling
 		const sl::Extent& outputExtent = fullExtent;
 		const sl::Extent& vectorExtent = isQuality ? lowExtent : fullExtent;
 
-		sl::ResourceTag tags[] = {
+		std::array<sl::ResourceTag, 4> tags = {
 			sl::ResourceTag(&colorIn, sl::kBufferTypeScalingInputColor, sl::eOnlyValidNow, &inputExtent),
 			sl::ResourceTag(&colorOut, sl::kBufferTypeScalingOutputColor, sl::eOnlyValidNow, &outputExtent),
 			sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::eValidUntilPresent, &vectorExtent),
@@ -406,7 +415,7 @@ namespace F4R_Upscaling
 			return;
 		}
 
-		res = slSetTagForFrame(*frameToken, viewport, tags, 4, ctx);
+		res = slSetTagForFrame(*frameToken, viewport, tags.data(), static_cast<std::uint32_t>(tags.size()), ctx);
 		if (res != sl::Result::eOk) {
 			static bool tagLogged = false;
 			if (!tagLogged) {
@@ -415,8 +424,8 @@ namespace F4R_Upscaling
 			}
 		}
 
-		const sl::BaseStructure* inputs[] = { &viewport };
-		res = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs, 1, ctx);
+		std::array<const sl::BaseStructure*, 1> inputs = { &viewport };
+		res = slEvaluateFeature(sl::kFeatureDLSS, *frameToken, inputs.data(), static_cast<std::uint32_t>(inputs.size()), ctx);
 		if (res != sl::Result::eOk) {
 			static bool evalLogged = false;
 			if (!evalLogged) {
@@ -426,11 +435,11 @@ namespace F4R_Upscaling
 		}
 
 		ID3D11Buffer* nullCB = nullptr;
-		ID3D11UnorderedAccessView* nullUAVs[8] = {};
-		ID3D11ShaderResourceView* nullSRVs[16] = {};
+		std::array<ID3D11UnorderedAccessView*, 8> nullUAVs{};
+		std::array<ID3D11ShaderResourceView*, 16> nullSRVs{};
 		ctx->CSSetConstantBuffers(0, 1, &nullCB);
-		ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
-		ctx->CSSetShaderResources(0, 16, nullSRVs);
+		ctx->CSSetUnorderedAccessViews(0, static_cast<UINT>(nullUAVs.size()), nullUAVs.data(), nullptr);
+		ctx->CSSetShaderResources(0, static_cast<UINT>(nullSRVs.size()), nullSRVs.data());
 		ctx->CSSetShader(nullptr, nullptr, 0);
 	}
 }
