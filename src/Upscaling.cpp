@@ -198,19 +198,15 @@ namespace F4R_Upscaling
 			return buffer;
 		}
 
-		std::int32_t ClampInt(std::int32_t a_value, std::int32_t a_min, std::int32_t a_max)
-		{
-			return std::clamp(a_value, a_min, a_max);
-		}
+		constexpr std::array<std::string_view, 4> kDLSSPresetLetters{
+			"J", "K", "L", "M"
+		};
 
-		float ClampScale(float a_value, float a_min, float a_max)
-		{
-			return std::clamp(a_value, a_min, a_max);
-		}
+		
 
-		std::string_view MethodName(std::int32_t a_method)
+		std::string_view MethodName(Method a_method)
 		{
-			switch (static_cast<Method>(a_method)) {
+			switch (a_method) {
 				case Method::FSR3:
 					return "FSR3";
 				case Method::DLSS:
@@ -223,17 +219,19 @@ namespace F4R_Upscaling
 			return "Off";
 		}
 
-		std::string_view QualityName(std::int32_t a_qualityMode)
+		std::string_view QualityName(QualityMode a_qualityMode)
 		{
 			switch (a_qualityMode) {
-				case 1:
+				case QualityMode::Quality:
 					return "Quality";
-				case 2:
+				case QualityMode::Balanced:
 					return "Balanced";
-				case 3:
+				case QualityMode::Performance:
 					return "Performance";
+				case QualityMode::Native:
+				default:
+					return "Native";
 			}
-			return "Native";
 		}
 
 	}
@@ -275,71 +273,23 @@ namespace F4R_Upscaling
 	Upscaling::~Upscaling()
 	{
 		for (int i = 0; i < 320; i++) {
-			if (biasedSamplerStates[i]) {
-				biasedSamplerStates[i]->Release();
-				biasedSamplerStates[i] = nullptr;
-			}
-			if (originalSamplerStates[i]) {
-				originalSamplerStates[i]->Release();
-				originalSamplerStates[i] = nullptr;
-			}
+			SafeRelease(biasedSamplerStates[i]);
+			SafeRelease(originalSamplerStates[i]);
 		}
-		if (hbaoDepthBackedUp) {
-			hbaoDepthBackedUp->Release();
-			hbaoDepthBackedUp = nullptr;
-		}
-		if (hbaoDepthShader) {
-			hbaoDepthShader->Release();
-			hbaoDepthShader = nullptr;
-		}
-		if (mvFixShader) {
-			mvFixShader->Release();
-			mvFixShader = nullptr;
-		}
-		if (mvFixCB) {
-			mvFixCB->Release();
-			mvFixCB = nullptr;
-		}
-		if (rcasShader) {
-			rcasShader->Release();
-			rcasShader = nullptr;
-		}
-		if (rcasCB) {
-			rcasCB->Release();
-			rcasCB = nullptr;
-		}
-		if (depthCopyShader) {
-			depthCopyShader->Release();
-			depthCopyShader = nullptr;
-		}
-		if (depthOverrideShader) {
-			depthOverrideShader->Release();
-			depthOverrideShader = nullptr;
-		}
-		if (flareDepthShader) {
-			flareDepthShader->Release();
-			flareDepthShader = nullptr;
-		}
-		if (flareDepthCB) {
-			flareDepthCB->Release();
-			flareDepthCB = nullptr;
-		}
-		if (flareDepthBackup) {
-			flareDepthBackup->Release();
-			flareDepthBackup = nullptr;
-		}
-		if (savedPassRTV) {
-			savedPassRTV->Release();
-			savedPassRTV = nullptr;
-		}
-		if (savedPassDSV) {
-			savedPassDSV->Release();
-			savedPassDSV = nullptr;
-		}
-		if (depthOverrideBackup) {
-			depthOverrideBackup->Release();
-			depthOverrideBackup = nullptr;
-		}
+		SafeRelease(hbaoDepthBackedUp);
+		SafeRelease(hbaoDepthShader);
+		SafeRelease(mvFixShader);
+		SafeRelease(mvFixCB);
+		SafeRelease(rcasShader);
+		SafeRelease(rcasCB);
+		SafeRelease(depthCopyShader);
+		SafeRelease(depthOverrideShader);
+		SafeRelease(flareDepthShader);
+		SafeRelease(flareDepthCB);
+		SafeRelease(flareDepthBackup);
+		SafeRelease(savedPassRTV);
+		SafeRelease(savedPassDSV);
+		SafeRelease(depthOverrideBackup);
 		ReleaseProxyTargets();
 		depthOverrideTexture.reset();
 	}
@@ -348,42 +298,62 @@ namespace F4R_Upscaling
 	{
 		auto& config = Config::GetSingleton();
 
-		settings.iMethod = config.GetInt("Settings", "iMethod", kDefaultMethod);
-		if constexpr (kSoleBackend != Method::Off) {
-			settings.iMethod = static_cast<std::int32_t>(kSoleBackend);
+const auto rawMethod = config.GetInt("Settings", "iMethod", static_cast<std::int32_t>(settings.method));
+	if constexpr (kSoleBackend != Method::Off) {
+		settings.method = kSoleBackend;
+	} else {
+		if (rawMethod >= static_cast<std::int32_t>(Method::Off) && rawMethod <= static_cast<std::int32_t>(Method::XeSS)) {
+			settings.method = static_cast<Method>(rawMethod);
+		}
+	}
+
+		settings.sharpness = std::clamp(config.GetFloat("Settings", "fSharpness", settings.sharpness), 0.0f, 1.0f);
+		const auto rawQuality = config.GetInt("Settings", "iQualityMode", static_cast<std::int32_t>(settings.qualityMode));
+	if (rawQuality >= 0 && rawQuality <= 3) {
+		settings.qualityMode = static_cast<QualityMode>(rawQuality);
+	}
+
+settings.qualityScale = std::clamp(config.GetFloat("Settings", "fQualityScale", settings.qualityScale), 0.60f, 0.67f);
+	settings.balancedScale = std::clamp(config.GetFloat("Settings", "fBalancedScale", settings.balancedScale), 0.55f, 0.62f);
+	settings.performanceScale = std::clamp(config.GetFloat("Settings", "fPerformanceScale", settings.performanceScale), 0.50f, 0.55f);
+
+		settings.anisotropicMipBias = std::clamp(config.GetFloat("Settings", "fAnisotropicMipBias", settings.anisotropicMipBias), -2.0f, 0.0f);
+
+if constexpr (kHasDLSS) {
+		settings.enableReflex = config.GetBool("Settings", "bEnableReflex", settings.enableReflex);
+		settings.reflexBoost = config.GetBool("Settings", "bReflexBoost", settings.reflexBoost);
+		settings.reflexUseFPSLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.reflexUseFPSLimit);
+		settings.reflexFPSLimit = std::clamp(config.GetFloat("Settings", "fReflexFPSLimit", settings.reflexFPSLimit), 20.0f, 240.0f);
+
+			const auto rawPreset = config.GetInt("Settings", "iDLSSPreset", static_cast<std::int32_t>(settings.dlssPreset));
+			if (rawPreset >= 0 && rawPreset <= 3) {
+				settings.dlssPreset = static_cast<DLSSPresetChoice>(rawPreset);
+			}
 		}
 
-		settings.fSharpness = ClampScale(config.GetFloat("Settings", "fSharpness", settings.fSharpness), 0.0f, 1.0f);
-		settings.iQualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
+		std::string_view methodName = MethodName(settings.method);
+		std::string_view qname = QualityName(settings.qualityMode);
 
-		settings.fQualityScale = ClampScale(config.GetFloat("Settings", "fQualityScale", settings.fQualityScale), 0.60f, 0.67f);
-		settings.fBalancedScale = ClampScale(config.GetFloat("Settings", "fBalancedScale", settings.fBalancedScale), 0.55f, 0.62f);
-		settings.fPerformanceScale = ClampScale(config.GetFloat("Settings", "fPerformanceScale", settings.fPerformanceScale), 0.50f, 0.55f);
-
-		settings.fAnisotropicMipBias = ClampScale(config.GetFloat("Settings", "fAnisotropicMipBias", settings.fAnisotropicMipBias), -2.0f, 0.0f);
-
-		if constexpr (kHasDLSS) {
-			settings.bEnableReflex = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
-			settings.bReflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
-			settings.bReflexUseFPSLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
-			settings.fReflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
-		}
-
-		std::string_view methodName = MethodName(settings.iMethod);
-		std::string_view qname = QualityName(settings.iQualityMode);
-
-		if (settings.iMethod == static_cast<std::int32_t>(Method::Off)) {
+		if (settings.method == Method::Off) {
 			REX::LogInformation("Settings loaded: method=Off");
 		}
 		else {
 			if constexpr (kHasDLSS) {
-				REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={} reflex={}",
-					methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias,
-					settings.bEnableReflex ? "enabled" : "disabled");
+				if (settings.method == Method::DLSS) {
+					REX::LogInformation("Settings loaded: method={} mode={} dlssPreset={} sharpness={} reflex={} mipBias={}",
+						methodName, qname,
+						kDLSSPresetLetters.at(static_cast<std::size_t>(settings.dlssPreset)),
+						settings.sharpness, settings.enableReflex ? "enabled" : "disabled",
+						settings.anisotropicMipBias);
+				} else {
+					REX::LogInformation("Settings loaded: method={} mode={} sharpness={} reflex={} mipBias={}",
+						methodName, qname, settings.sharpness, settings.enableReflex ? "enabled" : "disabled",
+						settings.anisotropicMipBias);
+				}
 			}
 			else {
 				REX::LogInformation("Settings loaded: method={} mode={} sharpness={} mipBias={}",
-					methodName, qname, settings.fSharpness, settings.fAnisotropicMipBias);
+					methodName, qname, settings.sharpness, settings.anisotropicMipBias);
 			}
 		}
 
@@ -415,14 +385,27 @@ namespace F4R_Upscaling
 			return;
 		}
 
-		if constexpr (kBackendCount > 1) {
-			const std::int32_t requested = config.GetInt("Settings", "iMethod", settings.iMethod);
-			if (requested >= static_cast<std::int32_t>(Method::Off) && requested <= static_cast<std::int32_t>(Method::XeSS) && requested != settings.iMethod) {
+		const auto previousDlssPreset = settings.dlssPreset;
+
+		if constexpr (kHasDLSS) {
+			const auto rawPreset = config.GetInt("Settings", "iDLSSPreset", static_cast<std::int32_t>(settings.dlssPreset));
+			if (rawPreset >= 0 && rawPreset <= 3) {
+				settings.dlssPreset = static_cast<DLSSPresetChoice>(rawPreset);
+			}
+		}
+
+		bool switchedToDLSS = false;
+
+if constexpr (kBackendCount > 1) {
+		const auto requestedRaw = config.GetInt("Settings", "iMethod", static_cast<std::int32_t>(settings.method));
+		if (requestedRaw >= static_cast<std::int32_t>(Method::Off) && requestedRaw <= static_cast<std::int32_t>(Method::XeSS)) {
+			const Method requested = static_cast<Method>(requestedRaw);
+			if (requested != settings.method) {
 				dlssUnsupportedLogged = false;
 #if F4R_HAS_DLSS
 				auto& streamline = Streamline::GetSingleton();
-				if (requested == static_cast<std::int32_t>(Method::DLSS) && streamline.initialized && !streamline.featureDLSS) {
-					settings.iMethod = lastWorkingMethod;
+				if (requested == Method::DLSS && streamline.initialized && !streamline.featureDLSS) {
+					settings.method = lastWorkingMethod;
 					REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
 					dlssUnsupportedLogged = true;
 					resetHistory = true;
@@ -430,9 +413,14 @@ namespace F4R_Upscaling
 				else
 #endif
 				{
-					settings.iMethod = requested;
-					if (requested == static_cast<std::int32_t>(Method::Off)) {
+					settings.method = requested;
+					if (requested == Method::Off) {
 						REX::LogInformation("Settings updated: method=Off");
+					}
+					else if (requested == Method::DLSS) {
+						switchedToDLSS = true;
+						REX::LogInformation("Settings updated: method=DLSS dlssPreset={}",
+							kDLSSPresetLetters.at(static_cast<std::size_t>(settings.dlssPreset)));
 					}
 					else {
 						REX::LogInformation("Settings updated: method={}", MethodName(requested));
@@ -441,6 +429,7 @@ namespace F4R_Upscaling
 				}
 			}
 		}
+	}
 
 		bool qualityChanged = false;
 		bool sharpnessChanged = false;
@@ -450,68 +439,81 @@ namespace F4R_Upscaling
 		std::string reflexDesc;
 		std::string scalesDesc;
 
-		const float sharpness = ClampScale(config.GetFloat("Settings", "fSharpness", settings.fSharpness), 0.0f, 1.0f);
-		if (sharpness != settings.fSharpness) {
-			settings.fSharpness = sharpness;
-			sharpnessChanged = true;
-		}
+const float sharpness = std::clamp(config.GetFloat("Settings", "fSharpness", settings.sharpness), 0.0f, 1.0f);
+	if (sharpness != settings.sharpness) {
+		settings.sharpness = sharpness;
+		sharpnessChanged = true;
+	}
 
-		const std::int32_t qualityMode = ClampInt(config.GetInt("Settings", "iQualityMode", settings.iQualityMode), 0, 3);
-		if (qualityMode != settings.iQualityMode) {
-			settings.iQualityMode = qualityMode;
-			qualityChanged = true;
-		}
+	const auto rawQualityMode = config.GetInt("Settings", "iQualityMode", static_cast<std::int32_t>(settings.qualityMode));
+	QualityMode qualityMode = settings.qualityMode;
+	if (rawQualityMode >= 0 && rawQualityMode <= 3) {
+		qualityMode = static_cast<QualityMode>(rawQualityMode);
+	}
+	if (qualityMode != settings.qualityMode) {
+		settings.qualityMode = qualityMode;
+		qualityChanged = true;
+	}
 
-		const float qualityScale = ClampScale(config.GetFloat("Settings", "fQualityScale", settings.fQualityScale), 0.60f, 0.67f);
-		if (qualityScale != settings.fQualityScale) {
-			settings.fQualityScale = qualityScale;
-			scalesChanged = true;
-		}
+const float qualityScale = std::clamp(config.GetFloat("Settings", "fQualityScale", settings.qualityScale), 0.60f, 0.67f);
+	if (qualityScale != settings.qualityScale) {
+		settings.qualityScale = qualityScale;
+		scalesChanged = true;
+	}
 
-		const float balancedScale = ClampScale(config.GetFloat("Settings", "fBalancedScale", settings.fBalancedScale), 0.55f, 0.62f);
-		if (balancedScale != settings.fBalancedScale) {
-			settings.fBalancedScale = balancedScale;
-			scalesChanged = true;
-		}
+	const float balancedScale = std::clamp(config.GetFloat("Settings", "fBalancedScale", settings.balancedScale), 0.55f, 0.62f);
+	if (balancedScale != settings.balancedScale) {
+		settings.balancedScale = balancedScale;
+		scalesChanged = true;
+	}
 
-		const float performanceScale = ClampScale(config.GetFloat("Settings", "fPerformanceScale", settings.fPerformanceScale), 0.50f, 0.55f);
-		if (performanceScale != settings.fPerformanceScale) {
-			settings.fPerformanceScale = performanceScale;
-			scalesChanged = true;
-		}
+	const float performanceScale = std::clamp(config.GetFloat("Settings", "fPerformanceScale", settings.performanceScale), 0.50f, 0.55f);
+	if (performanceScale != settings.performanceScale) {
+		settings.performanceScale = performanceScale;
+		scalesChanged = true;
+	}
 
 		if (scalesChanged) {
 			scalesDesc = std::format(" scales={:.2f}/{:.2f}/{:.2f}",
-				settings.fQualityScale,
-				settings.fBalancedScale,
-				settings.fPerformanceScale);
+				settings.qualityScale,
+				settings.balancedScale,
+				settings.performanceScale);
 		}
 
-		const bool reflexEnabled = config.GetBool("Settings", "bEnableReflex", settings.bEnableReflex);
-		const bool reflexBoost = config.GetBool("Settings", "bReflexBoost", settings.bReflexBoost);
-		const bool reflexUseLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.bReflexUseFPSLimit);
-		const float reflexFPSLimit = ClampScale(config.GetFloat("Settings", "fReflexFPSLimit", settings.fReflexFPSLimit), 20.0f, 240.0f);
+const bool reflexEnabled = config.GetBool("Settings", "bEnableReflex", settings.enableReflex);
+	const bool reflexBoost = config.GetBool("Settings", "bReflexBoost", settings.reflexBoost);
+	const bool reflexUseLimit = config.GetBool("Settings", "bReflexUseFPSLimit", settings.reflexUseFPSLimit);
+	const float reflexFPSLimit = std::clamp(config.GetFloat("Settings", "fReflexFPSLimit", settings.reflexFPSLimit), 20.0f, 240.0f);
 
-		reflexChanged = (reflexEnabled != settings.bEnableReflex) ||
-						(reflexBoost != settings.bReflexBoost) ||
-						(reflexUseLimit != settings.bReflexUseFPSLimit) ||
-						(reflexFPSLimit != settings.fReflexFPSLimit);
+	reflexChanged = (reflexEnabled != settings.enableReflex) ||
+					(reflexBoost != settings.reflexBoost) ||
+					(reflexUseLimit != settings.reflexUseFPSLimit) ||
+					(reflexFPSLimit != settings.reflexFPSLimit);
 
-		settings.bEnableReflex = reflexEnabled;
-		settings.bReflexBoost = reflexBoost;
-		settings.bReflexUseFPSLimit = reflexUseLimit;
-		settings.fReflexFPSLimit = reflexFPSLimit;
+	settings.enableReflex = reflexEnabled;
+	settings.reflexBoost = reflexBoost;
+	settings.reflexUseFPSLimit = reflexUseLimit;
+	settings.reflexFPSLimit = reflexFPSLimit;
 
 		if (reflexChanged) {
 			reflexDesc = std::format(" reflex={}{}{}",
-				settings.bEnableReflex ? "enabled" : "disabled",
-				settings.bReflexBoost ? "+boost" : "",
-				settings.bReflexUseFPSLimit ? " limit" : "");
+				settings.enableReflex ? "enabled" : "disabled",
+				settings.reflexBoost ? "+boost" : "",
+				settings.reflexUseFPSLimit ? " limit" : "");
 		}
 
-		const float mipBias = ClampScale(config.GetFloat("Settings", "fAnisotropicMipBias", settings.fAnisotropicMipBias), -2.0f, 0.0f);
-		if (mipBias != settings.fAnisotropicMipBias) {
-			settings.fAnisotropicMipBias = mipBias;
+		if constexpr (kHasDLSS) {
+			if (previousDlssPreset != settings.dlssPreset &&
+				settings.method == Method::DLSS &&
+				!switchedToDLSS) {
+				REX::LogInformation("Settings updated: dlssPreset={}",
+					kDLSSPresetLetters.at(static_cast<std::size_t>(settings.dlssPreset)));
+			}
+		}
+
+const float mipBias = std::clamp(config.GetFloat("Settings", "fAnisotropicMipBias", settings.anisotropicMipBias), -2.0f, 0.0f);
+	if (mipBias != settings.anisotropicMipBias) {
+		settings.anisotropicMipBias = mipBias;
 			mipBiasChanged = true;
 			samplerCacheValid = false;
 		}
@@ -520,11 +522,11 @@ namespace F4R_Upscaling
 			std::string line = "Settings updated:";
 			if (qualityChanged) {
 				line += " mode=";
-				line += QualityName(settings.iQualityMode);
+				line += QualityName(settings.qualityMode);
 			}
 			if (sharpnessChanged) {
 				line += " sharpness=";
-				line += std::format("{:.1f}", settings.fSharpness);
+				line += std::format("{:.1f}", settings.sharpness);
 			}
 			if (reflexChanged) {
 				line += reflexDesc;
@@ -533,7 +535,7 @@ namespace F4R_Upscaling
 				line += scalesDesc;
 			}
 			if (mipBiasChanged) {
-				std::string value = std::format("{:.4f}", settings.fAnisotropicMipBias);
+				std::string value = std::format("{:.4f}", settings.anisotropicMipBias);
 				const std::size_t dot = value.find('.');
 				if (dot != std::string::npos) {
 					std::size_t end = value.size();
@@ -577,9 +579,8 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		static const std::array<RE::BSFixedString, 6> blockedMenus = {
-			"PauseMenu", "PipboyMenu", "BarterMenu",
-			"ExamineMenu", "TerminalMenu", "LockpickingMenu"
+		static const std::array<RE::BSFixedString, 3> blockedMenus = {
+			"ExamineMenu", "LockpickingMenu"
 		};
 		for (const auto& name : blockedMenus) {
 			if (ui->IsMenuOpen(name).value_or(false)) {
@@ -598,7 +599,7 @@ namespace F4R_Upscaling
 			PollRuntimeSettings();
 		}
 
-		auto method = static_cast<Method>(settings.iMethod);
+auto method = settings.method;
 		upsclEnabled = false;
 		if (method == Method::Off) {
 			if (wasUpsclEnabled || fxaaStateSaved || taaFlagSaved || samplerBiasActive) {
@@ -613,10 +614,10 @@ namespace F4R_Upscaling
 			auto& streamline = Streamline::GetSingleton();
 			if (streamline.initialized && !streamline.featureDLSS) {
 				if (!dlssUnsupportedLogged) {
-					settings.iMethod = lastWorkingMethod;
+					settings.method = lastWorkingMethod;
 					REX::LogInformation("Settings updated: method=Unsupported, falling back to {}", MethodName(lastWorkingMethod));
 					dlssUnsupportedLogged = true;
-					method = static_cast<Method>(settings.iMethod);
+method = settings.method;
 					resetHistory = true;
 				}
 			}
@@ -640,7 +641,7 @@ namespace F4R_Upscaling
 #endif
 
 		if (method != Method::Off && upsclEnabled) {
-			lastWorkingMethod = static_cast<std::int32_t>(method);
+			lastWorkingMethod = method;
 		}
 
 		if (main && (!main->gameActive || shouldBlock)) {
@@ -664,14 +665,14 @@ namespace F4R_Upscaling
 
 		float desiredScale = 1.0f;
 		if (upsclEnabled && !g_enbLoaded) {
-			if (settings.iQualityMode == 1) {
-				desiredScale = settings.fQualityScale;
+			if (settings.qualityMode == QualityMode::Quality) {
+				desiredScale = settings.qualityScale;
 			}
-			else if (settings.iQualityMode == 2) {
-				desiredScale = settings.fBalancedScale;
+			else if (settings.qualityMode == QualityMode::Balanced) {
+				desiredScale = settings.balancedScale;
 			}
-			else if (settings.iQualityMode == 3) {
-				desiredScale = settings.fPerformanceScale;
+			else if (settings.qualityMode == QualityMode::Performance) {
+				desiredScale = settings.performanceScale;
 			}
 		}
 		currentScale = desiredScale;
@@ -715,7 +716,7 @@ namespace F4R_Upscaling
 			const bool wantSamplerBias = upsclEnabled;
 			const bool scaled = desiredScale < 0.999f;
 			const float scaleCompensation = scaled ? std::log2(desiredScale) : 0.0f;
-			const float samplerBias = scaleCompensation + settings.fAnisotropicMipBias;
+			const float samplerBias = scaleCompensation + settings.anisotropicMipBias;
 			samplerBiasActive = wantSamplerBias && (samplerBias != 0.0f);
 
 			auto* samplerStates = samplerBiasActive ? GetGlobalSamplers() : nullptr;
@@ -759,7 +760,7 @@ namespace F4R_Upscaling
 
 	void Upscaling::Apply()
 	{
-		const auto method = static_cast<Method>(settings.iMethod);
+		const auto method = settings.method;
 		if (method == Method::Off) {
 			return;
 		}
@@ -867,10 +868,10 @@ namespace F4R_Upscaling
 				}
 			}
 
-			std::uint32_t dlssQuality = 0u;
+			QualityMode dlssQuality = QualityMode::Native;
 			if (currentScale < 0.999f) {
-				if (settings.iQualityMode >= 1 && settings.iQualityMode <= 3) {
-					dlssQuality = static_cast<std::uint32_t>(settings.iQualityMode);
+				if (settings.qualityMode != QualityMode::Native) {
+					dlssQuality = settings.qualityMode;
 				}
 			}
 			streamline.Evaluate(
@@ -881,9 +882,9 @@ namespace F4R_Upscaling
 				jitterX, jitterY, renderW, renderH, dlssQuality);
 			resetHistory = false;
 
-			if (settings.fSharpness > 0.0f && tempTexture && tempTexture->resource && tempTexture->uav && rcasShader && rcasCB && dlssOutputTexture->srv) {
+			if (settings.sharpness > 0.0f && tempTexture && tempTexture->resource && tempTexture->uav && rcasShader && rcasCB && dlssOutputTexture->srv) {
 
-				float sharpness = settings.fSharpness;
+				float sharpness = settings.sharpness;
 				if (sharpness < 0.0f) {
 					sharpness = 0.0f;
 				}
@@ -971,9 +972,9 @@ namespace F4R_Upscaling
 				xessOutputTexture.get(),
 				jitterX, jitterY, renderW, renderH, reset);
 
-			if (settings.fSharpness > 0.0f && tempTexture && tempTexture->uav && xessOutputTexture && xessOutputTexture->srv && rcasShader && rcasCB) {
+			if (settings.sharpness > 0.0f && tempTexture && tempTexture->uav && xessOutputTexture && xessOutputTexture->srv && rcasShader && rcasCB) {
 
-				float sharpness = settings.fSharpness;
+				float sharpness = settings.sharpness;
 				if (sharpness < 0.0f) {
 					sharpness = 0.0f;
 				}
@@ -1154,11 +1155,11 @@ namespace F4R_Upscaling
 		DXGI_FORMAT a_backBufferFormat,
 		DXGI_FORMAT a_srvFormat)
 	{
-		if (!a_device || settings.fSharpness <= 0.0f) {
+		if (!a_device || settings.sharpness <= 0.0f) {
 			return;
 		}
-		if (settings.iMethod != static_cast<std::int32_t>(Method::DLSS) &&
-			settings.iMethod != static_cast<std::int32_t>(Method::XeSS)) {
+		if (settings.method != Method::DLSS &&
+			settings.method != Method::XeSS) {
 			return;
 		}
 		if (!rcasCB) {
@@ -1177,8 +1178,8 @@ namespace F4R_Upscaling
 		if (!a_device) {
 			return;
 		}
-		if (settings.iMethod != static_cast<std::int32_t>(Method::DLSS) &&
-			settings.iMethod != static_cast<std::int32_t>(Method::XeSS)) {
+		if (settings.method != Method::DLSS &&
+			settings.method != Method::XeSS) {
 			return;
 		}
 		if (!mvFixCB) {
@@ -1237,6 +1238,66 @@ namespace F4R_Upscaling
 	{
 		PopFlareDepth();
 		flareValid = false;
+	}
+
+	ID3D11ShaderResourceView* Upscaling::EnsureFlareDepthCopy(REX::W32::ID3D11Device* a_device, REX::W32::ID3D11Texture2D* a_srcTexture)
+	{
+		if (!a_device || !a_srcTexture) {
+			return nullptr;
+		}
+
+		REX::W32::D3D11_TEXTURE2D_DESC srcDesc = {};
+		a_srcTexture->GetDesc(&srcDesc);
+
+		REX::W32::DXGI_FORMAT srvFormat = REX::W32::DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+		if (srcDesc.format == REX::W32::DXGI_FORMAT_D32_FLOAT || srcDesc.format == REX::W32::DXGI_FORMAT_R32_TYPELESS) {
+			srvFormat = REX::W32::DXGI_FORMAT_R32_FLOAT;
+		}
+
+		if (flareDepthCopyTexture && flareDepthCopySRV &&
+			flareDepthCopyFormat == srvFormat &&
+			flareDepthCopyWidth == srcDesc.width &&
+			flareDepthCopyHeight == srcDesc.height) {
+			return flareDepthCopySRV;
+		}
+
+		SafeRelease(flareDepthCopySRV);
+		SafeRelease(flareDepthCopyTexture);
+
+		REX::W32::D3D11_TEXTURE2D_DESC tmpDesc = srcDesc;
+		tmpDesc.format = srvFormat;
+		tmpDesc.bindFlags = D3D11_BIND_SHADER_RESOURCE;
+		tmpDesc.usage = REX::W32::D3D11_USAGE_DEFAULT;
+		tmpDesc.cpuAccessFlags = 0;
+		tmpDesc.miscFlags = 0;
+
+		REX::W32::ID3D11Texture2D* tmpTex = nullptr;
+		HRESULT hr = a_device->CreateTexture2D(&tmpDesc, nullptr, &tmpTex);
+
+		if (FAILED(hr) || !tmpTex) {
+			return nullptr;
+		}
+
+		flareDepthCopyTexture = reinterpret_cast<ID3D11Texture2D*>(tmpTex);
+
+		REX::W32::D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.format = srvFormat;
+		srvDesc.viewDimension = REX::W32::D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.texture2D.mipLevels = 1;
+		REX::W32::ID3D11ShaderResourceView* tmpSRV = nullptr;
+		hr = a_device->CreateShaderResourceView(tmpTex, &srvDesc, &tmpSRV);
+
+		if (FAILED(hr) || !tmpSRV) {
+			SafeRelease(flareDepthCopyTexture);
+			return nullptr;
+		}
+
+		flareDepthCopySRV = reinterpret_cast<ID3D11ShaderResourceView*>(tmpSRV);
+		flareDepthCopyFormat = srvFormat;
+		flareDepthCopyWidth = srcDesc.width;
+		flareDepthCopyHeight = srcDesc.height;
+
+		return flareDepthCopySRV;
 	}
 
 	void Upscaling::BuildFlareDepth(RE::BSGraphics::RenderTargetManager& a_rtMgr)
@@ -1387,14 +1448,8 @@ namespace F4R_Upscaling
 				ctxRelease->OMSetRenderTargets(1, &restoreRTV, savedPassDSV);
 			}
 		}
-		if (savedPassRTV) {
-			savedPassRTV->Release();
-			savedPassRTV = nullptr;
-		}
-		if (savedPassDSV) {
-			savedPassDSV->Release();
-			savedPassDSV = nullptr;
-		}
+SafeRelease(savedPassRTV);
+SafeRelease(savedPassDSV);
 		ReleaseProxyTargets();
 		scaledTargetsValid = false;
 		scaledTargetWidthRatio = 0.0f;
@@ -1633,6 +1688,9 @@ namespace F4R_Upscaling
 	bool Upscaling::EnterFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyIn,
 		bool a_clearProxies)
 	{
+		if (a_pass >= ProxyPass::Count) {
+			return false;
+		}
 		if (!scaledTargetsValid || scaledTargetsOverridden) {
 			return false;
 		}
@@ -1680,11 +1738,6 @@ namespace F4R_Upscaling
 		}
 		profile.fallback = false;
 
-		for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
-			const std::uint32_t slot = targetIDs[kProxyTargets[i]];
-			rendererData->renderTargets[slot] = proxyScaledTargets[i];
-		}
-
 		static const std::array<float, 4> kClearZero = { 0.0f, 0.0f, 0.0f, 0.0f };
 		if (a_clearProxies) {
 			for (std::uint32_t i = 0; i < kProxyTargetCount; ++i) {
@@ -1712,17 +1765,13 @@ namespace F4R_Upscaling
 
 		for (std::uint32_t i = 0; i < kProxyTargetMetaCount; ++i) {
 			savedRenderTargetMeta[i] = a_rtMgr.renderTargetDataArray[i];
-			a_rtMgr.renderTargetDataArray[i].width = static_cast<std::uint32_t>(
-				static_cast<float>(a_rtMgr.renderTargetDataArray[i].width) * scaledTargetWidthRatio);
-			a_rtMgr.renderTargetDataArray[i].height = static_cast<std::uint32_t>(
-				static_cast<float>(a_rtMgr.renderTargetDataArray[i].height) * scaledTargetHeightRatio);
 		}
 
 		ctx->OMGetRenderTargets(1, &savedPassRTV, &savedPassDSV);
 
-		ID3D11ShaderResourceView* boundSRVs[16] = {};
-		ctx->PSGetShaderResources(0, 16, boundSRVs);
-		for (int slot = 0; slot < 16; ++slot) {
+		ID3D11ShaderResourceView* boundSRVs[kProxySRVSlotCount] = {};
+		ctx->PSGetShaderResources(0, kProxySRVSlotCount, boundSRVs);
+		for (std::uint32_t slot = 0; slot < kProxySRVSlotCount; ++slot) {
 			if (!boundSRVs[slot]) {
 				continue;
 			}
@@ -1738,9 +1787,7 @@ namespace F4R_Upscaling
 		}
 
 		savedUseDynViewportAsDefault = GetUseDynViewportAsDefault(a_rtMgr);
-		SetGlobalDynamicRatio(a_rtMgr, 1.0f, 1.0f);
-		GetSetUseDynViewportAsDefault()(&a_rtMgr, false);
-		GetSetCurrentViewportDefault()(&a_rtMgr);
+		ApplyFullExtentOverride();
 		scaledTargetsOverridden = true;
 		activeProxyPass = a_pass;
 		activeCopyInMask = copyMask;
@@ -1754,7 +1801,11 @@ namespace F4R_Upscaling
 		if (!scaledTargetsOverridden) {
 			return;
 		}
+		ApplyFullExtentOverride();
+	}
 
+	void Upscaling::ApplyFullExtentOverride()
+	{
 		auto& a_rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
 		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		const auto* targetIDs = GetRenderTargetIDs(a_rtMgr);
@@ -1801,17 +1852,28 @@ namespace F4R_Upscaling
 			return false;
 		}
 
-		const auto* base = reinterpret_cast<std::uint8_t*>(REL::Module::GetSingleton()->GetBaseAddress());
-		auto* managerSlot = reinterpret_cast<void**>(const_cast<std::uint8_t*>(base) + 0x6723350);
+		constexpr std::uintptr_t kDeferredScatterManagerOffset = 0x6723350;
+		constexpr std::uintptr_t kDeferredScatterCountOffset = 0x420;
+		constexpr std::uintptr_t kDeferredScatterArrayStride = 0xA * sizeof(void*);
+		constexpr std::uintptr_t kDeferredScatterPendingOffset = 0x1C;
+
+		const auto baseAddress = REL::Module::GetSingleton()->GetBaseAddress();
+		if (baseAddress == 0) {
+			return false;
+		}
+		const auto* base = reinterpret_cast<const std::uint8_t*>(baseAddress);
+		auto* managerSlot = reinterpret_cast<void**>(const_cast<std::uint8_t*>(base) + kDeferredScatterManagerOffset);
 		if (!*managerSlot) {
 			return false;
 		}
 		auto* countSlot = *reinterpret_cast<void**>(
-			reinterpret_cast<std::uint8_t*>(*managerSlot) + 0x420 + 0xA * 8);
+			reinterpret_cast<std::uint8_t*>(*managerSlot) + kDeferredScatterCountOffset +
+			kDeferredScatterArrayStride);
 		if (!countSlot) {
 			return false;
 		}
-		return *reinterpret_cast<const int*>(reinterpret_cast<std::uint8_t*>(countSlot) + 0x1C) > 0;
+		return *reinterpret_cast<const int*>(
+			reinterpret_cast<std::uint8_t*>(countSlot) + kDeferredScatterPendingOffset) > 0;
 	}
 
 	std::uint32_t Upscaling::ObserveBoundProxySRVs(bool a_rebind)
@@ -1822,9 +1884,9 @@ namespace F4R_Upscaling
 			return observedMask;
 		}
 
-		ID3D11ShaderResourceView* boundSRVs[16] = {};
-		ctx->PSGetShaderResources(0, 16, boundSRVs);
-		for (int slot = 0; slot < 16; ++slot) {
+		ID3D11ShaderResourceView* boundSRVs[kProxySRVSlotCount] = {};
+		ctx->PSGetShaderResources(0, kProxySRVSlotCount, boundSRVs);
+		for (std::uint32_t slot = 0; slot < kProxySRVSlotCount; ++slot) {
 			if (!boundSRVs[slot]) {
 				continue;
 			}
@@ -1859,30 +1921,33 @@ namespace F4R_Upscaling
 		observedMask |= pendingObservedMask;
 		pendingObservedMask = 0;
 
-		auto& profile = proxyPassProfiles[static_cast<std::size_t>(a_pass)];
-		if (profile.narrowable) {
-			const std::uint32_t missing = observedMask & profile.staticMask & ~activeCopyInMask;
-			if (missing) {
-				profile.observedMask |= missing;
-				profile.stableFrames = 0;
-				profile.fallback = true;
-			}
-			else {
-				const std::uint32_t merged = profile.observedMask | observedMask;
-				if (merged != profile.observedMask) {
-					profile.observedMask = merged;
+		const bool validPass = a_pass < ProxyPass::Count;
+		if (validPass) {
+			auto& profile = proxyPassProfiles[static_cast<std::size_t>(a_pass)];
+			if (profile.narrowable) {
+				const std::uint32_t missing = observedMask & profile.staticMask & ~activeCopyInMask;
+				if (missing) {
+					profile.observedMask |= missing;
 					profile.stableFrames = 0;
+					profile.fallback = true;
 				}
-				else if (profile.stableFrames < kProxyLearnFrames) {
-					profile.stableFrames++;
+				else {
+					const std::uint32_t merged = profile.observedMask | observedMask;
+					if (merged != profile.observedMask) {
+						profile.observedMask = merged;
+						profile.stableFrames = 0;
+					}
+					else if (profile.stableFrames < kProxyLearnFrames) {
+						profile.stableFrames++;
+					}
+					if (!profile.learned && profile.stableFrames >= kProxyLearnFrames && profile.observedMask != 0) {
+						profile.learned = true;
+					}
 				}
-				if (!profile.learned && profile.stableFrames >= kProxyLearnFrames && profile.observedMask != 0) {
-					profile.learned = true;
-				}
-			}
 
-			if (profile.learned) {
-				profile.copyInMask = profile.observedMask & profile.staticMask;
+				if (profile.learned) {
+					profile.copyInMask = profile.observedMask & profile.staticMask;
+				}
 			}
 		}
 
@@ -1922,14 +1987,8 @@ namespace F4R_Upscaling
 			ID3D11RenderTargetView* restoreRTV = savedPassRTV;
 			ctx->OMSetRenderTargets(1, &restoreRTV, savedPassDSV);
 		}
-		if (savedPassRTV) {
-			savedPassRTV->Release();
-			savedPassRTV = nullptr;
-		}
-		if (savedPassDSV) {
-			savedPassDSV->Release();
-			savedPassDSV = nullptr;
-		}
+SafeRelease(savedPassRTV);
+SafeRelease(savedPassDSV);
 		scaledTargetsOverridden = false;
 		activeProxyPass = ProxyPass::Count;
 		activeCopyInMask = 0;
@@ -2147,7 +2206,7 @@ namespace F4R_Upscaling
 									   cachedHeight != state.screenHeight ||
 									   cachedFormat != backBufferFormat;
 
-			if (!outputChanged && cachedMethod == settings.iMethod) {
+			if (!outputChanged && cachedMethod == settings.method) {
 				if (currentScale < 0.999f) {
 					if (!flareDepthTexture || !flareDepthTexture->resource || !flareDepthShader || !flareDepthCB || !flareValid) {
 						EnsureFlareResources(device, state.screenWidth, state.screenHeight);
@@ -2180,43 +2239,27 @@ namespace F4R_Upscaling
 				}
 			}
 #endif
-			if (mvFixCB) {
-				mvFixCB->Release();
-				mvFixCB = nullptr;
-			}
-			if (rcasCB) {
-				rcasCB->Release();
-				rcasCB = nullptr;
-			}
-			if (mvFixShader) {
-				mvFixShader->Release();
-				mvFixShader = nullptr;
-			}
-			if (rcasShader) {
-				rcasShader->Release();
-				rcasShader = nullptr;
-			}
-			if (depthCopyShader) {
-				depthCopyShader->Release();
-				depthCopyShader = nullptr;
-			}
-			if (flareDepthCB) {
-				flareDepthCB->Release();
-				flareDepthCB = nullptr;
-			}
-			if (flareDepthShader) {
-				flareDepthShader->Release();
-				flareDepthShader = nullptr;
-			}
+			SafeRelease(mvFixCB);
+			SafeRelease(rcasCB);
+			SafeRelease(mvFixShader);
+			SafeRelease(rcasShader);
+			SafeRelease(depthCopyShader);
+			SafeRelease(flareDepthCB);
+			SafeRelease(flareDepthShader);
 			PopFlareDepth();
 			flareDepthTexture.reset();
+			SafeRelease(flareDepthCopySRV);
+			SafeRelease(flareDepthCopyTexture);
+			flareDepthCopyFormat = REX::W32::DXGI_FORMAT_UNKNOWN;
+			flareDepthCopyWidth = 0;
+			flareDepthCopyHeight = 0;
 			flareValid = false;
 			flareWidth = 0;
 			flareHeight = 0;
 			resourcesCreated = false;
 		}
 
-		const auto method = static_cast<Method>(settings.iMethod);
+		const auto method = settings.method;
 
 #if F4R_HAS_FSR3
 		if (method == Method::FSR3 && !workingTexture) {
@@ -2356,7 +2399,7 @@ namespace F4R_Upscaling
 				REX::LogError("CheckResources: CreateFSRResources failed");
 				fidelityFX.reset();
 			}
-			else if (g_enbLoaded && settings.iQualityMode >= 1 && settings.iQualityMode <= 3) {
+			else if (g_enbLoaded && settings.qualityMode != QualityMode::Native) {
 				REX::LogInformation("ENB forces Native for FSR3");
 			}
 		}
@@ -2453,9 +2496,9 @@ namespace F4R_Upscaling
 
 			EnsureMotionVectorFixResources(device);
 
-			std::int32_t xessQualityMode = settings.iQualityMode;
-			if (g_enbLoaded && xessQualityMode >= 1 && xessQualityMode <= 3) {
-				xessQualityMode = 0;
+			QualityMode xessQualityMode = settings.qualityMode;
+			if (g_enbLoaded && xessQualityMode != QualityMode::Native) {
+				xessQualityMode = QualityMode::Native;
 				REX::LogInformation("ENB forces Native for XeSS");
 			}
 
@@ -2491,7 +2534,7 @@ namespace F4R_Upscaling
 		cachedWidth = state.screenWidth;
 		cachedHeight = state.screenHeight;
 		cachedFormat = backBufferFormat;
-		cachedMethod = settings.iMethod;
+		cachedMethod = settings.method;
 	}
 
 	namespace

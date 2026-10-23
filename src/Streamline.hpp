@@ -69,7 +69,7 @@ namespace F4R_Upscaling
 			float a_jitterY,
 			std::uint32_t a_renderWidth,
 			std::uint32_t a_renderHeight,
-			std::uint32_t a_qualityMode);
+			QualityMode a_qualityMode);
 
 	private:
 		Streamline() = default;

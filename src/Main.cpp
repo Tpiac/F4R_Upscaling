@@ -83,13 +83,13 @@ namespace
 		return false;
 	}
 
-	std::int32_t GetConfiguredMode()
+	F4R_Upscaling::Method GetConfiguredMode()
 	{
 		if constexpr (F4R_Upscaling::kSoleBackend != F4R_Upscaling::Method::Off) {
-			return static_cast<std::int32_t>(F4R_Upscaling::kSoleBackend);
+			return F4R_Upscaling::kSoleBackend;
 		}
 		else {
-			return F4R_Upscaling::Config::GetSingleton().GetInt("Settings", "iMethod", F4R_Upscaling::kDefaultMethod);
+			return static_cast<F4R_Upscaling::Method>(F4R_Upscaling::Config::GetSingleton().GetInt("Settings", "iMethod", static_cast<std::int32_t>(F4R_Upscaling::kDefaultMethod)));
 		}
 	}
 
@@ -208,7 +208,7 @@ F4SE_PLUGIN_LOAD(const F4SE::LoadInterface* a_f4se)
 #endif
 
 #if F4R_HAS_XESS
-	if (GetConfiguredMode() == static_cast<std::int32_t>(F4R_Upscaling::Method::XeSS)) {
+	if (GetConfiguredMode() == F4R_Upscaling::Method::XeSS) {
 		F4R_Upscaling::XeSS::GetSingleton().Load();
 	}
 #endif

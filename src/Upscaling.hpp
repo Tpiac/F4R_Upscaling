@@ -2,6 +2,7 @@
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <span>
 
 #include "Common.hpp"
@@ -89,6 +90,7 @@ namespace F4R_Upscaling
 		void ExitFullExtentPass(ProxyPass a_pass, std::span<const std::uint32_t> a_copyOut);
 		void AbortFullExtentPass();
 		void ReapplyFullExtentOverride();
+		void ApplyFullExtentOverride();
 		void ResetProxyPassProfiles();
 		std::uint32_t ObserveBoundProxySRVs(bool a_rebind);
 		[[nodiscard]] bool WillDeferredScatterRun() const;
@@ -127,6 +129,12 @@ namespace F4R_Upscaling
 		ID3D11ComputeShader* flareDepthShader = nullptr;
 		ID3D11Buffer* flareDepthCB = nullptr;
 		ID3D11ShaderResourceView* flareDepthBackup = nullptr;
+		ID3D11Texture2D* flareDepthCopyTexture = nullptr;
+		ID3D11ShaderResourceView* flareDepthCopySRV = nullptr;
+		REX::W32::DXGI_FORMAT flareDepthCopyFormat = REX::W32::DXGI_FORMAT_UNKNOWN;
+		std::uint32_t flareDepthCopyWidth = 0;
+		std::uint32_t flareDepthCopyHeight = 0;
+		ID3D11ShaderResourceView* EnsureFlareDepthCopy(REX::W32::ID3D11Device* a_device, REX::W32::ID3D11Texture2D* a_srcTexture);
 		bool flareValid = false;
 		std::uint32_t flareWidth = 0;
 		std::uint32_t flareHeight = 0;
@@ -170,6 +178,7 @@ namespace F4R_Upscaling
 		bool samplerCacheValid = false;
 
 		static constexpr std::uint32_t kProxyTargetCount = 24;
+		static constexpr std::uint32_t kProxySRVSlotCount = 16;
 		static constexpr std::uint32_t kProxyTargetMetaCount = 100;
 		static constexpr std::uint32_t kProxyLearnFrames = 30;
 		static constexpr std::array<std::uint32_t, kProxyTargetCount> kProxyTargets = {
@@ -297,15 +306,15 @@ namespace F4R_Upscaling
 		std::uint32_t cachedWidth = 0;
 		std::uint32_t cachedHeight = 0;
 		DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
-		std::int32_t cachedMethod = -1;
+		std::optional<Method> cachedMethod;
 #if F4R_HAS_XESS
-		std::int32_t cachedQuality = -1;
+		std::optional<QualityMode> cachedQuality;
 #endif
 
-		int startupFrameGuard = 0;
+		std::uint32_t startupFrameGuard = 0;
 		bool initialized = false;
 		float prevScale = 1.0f;
-		std::int32_t lastWorkingMethod = static_cast<std::int32_t>(Method::FSR3);
+		Method lastWorkingMethod = Method::FSR3;
 		bool dlssUnsupportedLogged = false;
 	};
 }

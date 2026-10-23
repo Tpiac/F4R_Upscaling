@@ -66,7 +66,7 @@ namespace F4R_Upscaling
 
 		bool Load();
 		bool CreateD3D12(ID3D11Device* a_device, ID3D11DeviceContext* a_context);
-		bool CreateContext(std::uint32_t a_width, std::uint32_t a_height, int a_qualityMode);
+		bool CreateContext(std::uint32_t a_width, std::uint32_t a_height, QualityMode a_qualityMode);
 		void DestroyContext();
 		void TeardownD3D12();
 

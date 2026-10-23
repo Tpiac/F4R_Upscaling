@@ -282,10 +282,10 @@ namespace F4R_Upscaling
 		sl::ReflexMode mode = sl::ReflexMode::eOff;
 		std::uint32_t frameLimitUs = 0;
 
-		if (aa.settings.bEnableReflex && aa.upsclEnabled) {
-			mode = aa.settings.bReflexBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
-			if (aa.settings.bReflexUseFPSLimit) {
-				frameLimitUs = static_cast<std::uint32_t>(1000000.0f / aa.settings.fReflexFPSLimit + 0.5f);
+		if (aa.settings.enableReflex && aa.upsclEnabled) {
+			mode = aa.settings.reflexBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
+			if (aa.settings.reflexUseFPSLimit) {
+				frameLimitUs = static_cast<std::uint32_t>(1000000.0f / aa.settings.reflexFPSLimit + 0.5f);
 			}
 		}
 
@@ -329,7 +329,7 @@ namespace F4R_Upscaling
 		float a_jitterY,
 		std::uint32_t a_renderWidth,
 		std::uint32_t a_renderHeight,
-		std::uint32_t a_qualityMode)
+		QualityMode a_qualityMode)
 	{
 		if (!AcquireFrameToken()) {
 			static bool tokenLogged = false;
@@ -351,13 +351,13 @@ namespace F4R_Upscaling
 		}
 
 		sl::DLSSMode mode = sl::DLSSMode::eDLAA;
-		if (a_qualityMode == 1) {
+		if (a_qualityMode == QualityMode::Quality) {
 			mode = sl::DLSSMode::eMaxQuality;
 		}
-		else if (a_qualityMode == 2) {
+		else if (a_qualityMode == QualityMode::Balanced) {
 			mode = sl::DLSSMode::eBalanced;
 		}
-		else if (a_qualityMode == 3) {
+		else if (a_qualityMode == QualityMode::Performance) {
 			mode = sl::DLSSMode::eMaxPerformance;
 		}
 
@@ -375,12 +375,20 @@ namespace F4R_Upscaling
 		options.outputWidth = state.screenWidth;
 		options.outputHeight = state.screenHeight;
 		options.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-		options.dlaaPreset = sl::DLSSPreset::ePresetK;
-		options.qualityPreset = sl::DLSSPreset::ePresetK;
-		options.balancedPreset = sl::DLSSPreset::ePresetK;
-		options.performancePreset = sl::DLSSPreset::ePresetK;
-		options.ultraPerformancePreset = sl::DLSSPreset::ePresetK;
-		options.ultraQualityPreset = sl::DLSSPreset::ePresetK;
+
+		static constexpr std::array<sl::DLSSPreset, 4> kDLSSPresetMap{
+			sl::DLSSPreset::ePresetJ,
+			sl::DLSSPreset::ePresetK,
+			sl::DLSSPreset::ePresetL,
+			sl::DLSSPreset::ePresetM
+		};
+
+		const sl::DLSSPreset preset = kDLSSPresetMap.at(
+			static_cast<std::size_t>(Upscaling::GetSingleton().settings.dlssPreset));
+
+		options.dlaaPreset = options.qualityPreset = options.balancedPreset =
+			options.performancePreset = options.ultraPerformancePreset =
+			options.ultraQualityPreset = preset;
 
 		sl::Result res = slDLSSSetOptions(viewport, options);
 		if (res != sl::Result::eOk) {

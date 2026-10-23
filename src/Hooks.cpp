@@ -35,16 +35,28 @@ namespace
 		}
 	}
 
-	inline bool IsContainerMenuOpen()
+
+	void EnsureFullScreenBlurHook();
+
+	using PipboyMenu_RenderFunc = void(RE::Interface3D::Renderer*);
+	PipboyMenu_RenderFunc* g_originalPipboyMenu_Render = nullptr;
+
+	void Hook_PipboyMenu_Render(RE::Interface3D::Renderer* a_this)
 	{
-		static const RE::BSFixedString containerMenu("ContainerMenu");
-		if (auto* ui = RE::UI::GetSingleton()) {
-			return ui->IsMenuOpen(containerMenu).value_or(false);
+		if (!a_this) {
+			if (g_originalPipboyMenu_Render) {
+				g_originalPipboyMenu_Render(a_this);
+			}
+			return;
 		}
-		return false;
+		FullResRenderScope scope{ Upscaling::GetSingleton().upsclEnabled && Upscaling::GetSingleton().currentScale < 0.999f && IsPipboyRenderTarget(*a_this) };
+		if (g_originalPipboyMenu_Render) {
+			g_originalPipboyMenu_Render(a_this);
+		}
 	}
 
 	using TAA_OffWhileUpscFunc = bool(ImageSpaceEffectTemporalAA*);
+
 	TAA_OffWhileUpscFunc* g_originalTAA_OffWhileUpsc = nullptr;
 
 	bool Hook_TAA_OffWhileUpsc(ImageSpaceEffectTemporalAA* a_this)
@@ -63,6 +75,8 @@ namespace
 	{
 		WorldTransformFix::Update();
 
+		EnsureFullScreenBlurHook();
+
 		g_originalPreRender_UpdateUpscState(a_this, a_p2, a_p3, a_p4, a_p5);
 		Upscaling::GetSingleton().Update();
 	}
@@ -78,7 +92,7 @@ namespace
 		up.seamVisited = true;
 		up.Apply();
 
-		if (up.upsclEnabled && up.currentScale < 0.999f && !IsContainerMenuOpen()) {
+		if (up.upsclEnabled && up.currentScale < 0.999f) {
 			up.BuildFlareDepth(*a_this);
 		}
 
@@ -158,6 +172,8 @@ namespace
 		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_DEPTH_OF_FIELD_SPLIT_SCREEN);
 	constexpr std::uint32_t kEffectFullScreenColor = static_cast<std::uint32_t>(
 		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_FULLSCREEN_COLOR);
+	constexpr std::uint32_t kEffectFullScreenBlur = static_cast<std::uint32_t>(
+		RE::ImageSpaceManager::ImageSpaceEffectEnum::EFFECT_FULLSCREEN_BLUR);
 
 	inline RE::ImageSpaceEffect* GetImageSpaceEffect(std::uint32_t a_index)
 	{
@@ -178,11 +194,7 @@ namespace
 		if (!a_effect) {
 			return false;
 		}
-		using IsActiveFunc = bool(RE::ImageSpaceEffect*);
-		constexpr std::size_t isActiveSlot = 8;
-		auto** vtable = *reinterpret_cast<void***>(a_effect);
-		auto fn = reinterpret_cast<IsActiveFunc*>(vtable[isActiveSlot]);
-		return fn(a_effect);
+		return a_effect->IsActive();
 	}
 
 	using Effects_PreserveJitterFunc = void(void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
@@ -195,7 +207,7 @@ namespace
 		float savedX = state.offsetX;
 		float savedY = state.offsetY;
 
-		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() || IsContainerMenuOpen() || VatsSplitDeferred(g_vatsSettle)) {
+		if (!up.upsclEnabled || a_p2 != 0 || a_p3 != 13 || !up.HasScaledTargets() || VatsSplitDeferred(g_vatsSettle)) {
 			g_originalEffects_PreserveJitter(a_this, a_p2, a_p3, a_p4, a_p5);
 			state.offsetX = savedX;
 			state.offsetY = savedY;
@@ -348,7 +360,33 @@ namespace
 	{
 		auto& rtMgr = RE::BSGraphics::RenderTargetManager::GetSingleton();
 		auto& up = Upscaling::GetSingleton();
+		auto* rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto* ctx = GetImmediateContext();
+		auto* device = GetRenderer();
+
 		up.PopFlareDepth();
+
+		if (up.upsclEnabled && up.currentScale < 0.999f) {
+			if (rendererData && ctx && device) {
+				auto& dst = rendererData->depthStencilTargets[DepthStencil::kMain];
+				auto* srcTexture = dst.texture;
+
+				if (srcTexture) {
+					auto* copySRV = up.EnsureFlareDepthCopy(reinterpret_cast<REX::W32::ID3D11Device*>(device), srcTexture);
+
+					if (copySRV) {
+						auto* rCtx = reinterpret_cast<REX::W32::ID3D11DeviceContext*>(ctx);
+						rCtx->CopyResource(reinterpret_cast<REX::W32::ID3D11Resource*>(up.flareDepthCopyTexture), reinterpret_cast<REX::W32::ID3D11Resource*>(srcTexture));
+
+						auto* savedSRV = dst.srViewDepth;
+						dst.srViewDepth = reinterpret_cast<REX::W32::ID3D11ShaderResourceView*>(copySRV);
+						up.BuildFlareDepth(rtMgr);
+						dst.srViewDepth = savedSRV;
+					}
+				}
+			}
+		}
+
 		const bool dynLow = (GetDynWidthRatio(rtMgr) != 1.0f || GetDynHeightRatio(rtMgr) != 1.0f);
 		const bool need = dynLow && up.upsclEnabled && up.currentScale < 0.999f && up.flareValid && up.flareDepthTexture && up.flareDepthTexture->srv;
 		if (need) {
@@ -418,8 +456,75 @@ namespace
 		}
 		g_originalSSLR_ReleaseRenderTarget(a_this, a_logicalID);
 	}
-}
 
+	using FullScreenBlur_UpdateParamsFunc = bool(void*, void*);
+	FullScreenBlur_UpdateParamsFunc* g_originalFullScreenBlur_UpdateParams = nullptr;
+	bool g_fullScreenBlurHookInstalled = false;
+	bool g_fullScreenBlurHookFailed = false;
+
+	bool Hook_FullScreenBlur_UpdateParams(void* a_this, void* a_param)
+	{
+		auto& up = Upscaling::GetSingleton();
+		auto* ism = RE::ImageSpaceManager::GetSingleton();
+
+		const bool compensate = up.upsclEnabled && up.currentScale < 0.999f &&
+			up.currentScale > 0.001f && up.scaledTargetsOverridden && ism != nullptr;
+
+		float savedBlurRadius = 0.0f;
+		if (compensate) {
+			savedBlurRadius = ism->currentEOFData.modData.blurRadius;
+			ism->currentEOFData.modData.blurRadius = savedBlurRadius * up.currentScale;
+		}
+
+		const bool result = g_originalFullScreenBlur_UpdateParams(a_this, a_param);
+
+		if (compensate) {
+			ism->currentEOFData.modData.blurRadius = savedBlurRadius;
+		}
+
+		return result;
+	}
+
+	void EnsureFullScreenBlurHook()
+	{
+		if (g_fullScreenBlurHookInstalled || g_fullScreenBlurHookFailed) {
+			return;
+		}
+
+		auto* ism = RE::ImageSpaceManager::GetSingleton();
+		if (!ism) {
+			return;
+		}
+
+		using Index = decltype(ism->effectList)::size_type;
+		const auto index = static_cast<Index>(kEffectFullScreenBlur);
+		if (index >= ism->effectList.size()) {
+			return;
+		}
+
+		auto* effect = ism->effectList[index];
+		if (!effect) {
+			return;
+		}
+
+		auto** vtable = *reinterpret_cast<void***>(effect);
+		if (!vtable) {
+			return;
+		}
+
+		const auto result = Detours::X64::DetourVTable(
+			reinterpret_cast<std::uintptr_t>(vtable),
+			reinterpret_cast<std::uintptr_t>(&Hook_FullScreenBlur_UpdateParams),
+			9);
+		g_originalFullScreenBlur_UpdateParams = reinterpret_cast<FullScreenBlur_UpdateParamsFunc*>(result);
+		g_fullScreenBlurHookInstalled = result != 0;
+		if (!g_fullScreenBlurHookInstalled) {
+			g_fullScreenBlurHookFailed = true;
+			LogHookResult("FullScreenBlur_UpdateParams", 0);
+		}
+	}
+
+}
 namespace F4R_Upscaling
 {
 	void Upscaling::InvokeHBAODynRes(bool a_dynamic)
@@ -602,6 +707,15 @@ namespace F4R_Upscaling
 				hooked = result != 0;
 			}
 			LogHookResult("SSLR_ReleaseRenderTarget", hooked ? 1 : 0);
+		}
+
+		{
+			std::uintptr_t hookAddr = IsOG()
+				? REL::Relocation{ REL::Id<>{ 1189309 } }.GetAddress()
+				: REL::Relocation{ REL::Id<>{ 2222566 } }.GetAddress();
+			auto result = Detours::X64::DetourFunction(hookAddr, reinterpret_cast<std::uintptr_t>(&Hook_PipboyMenu_Render));
+			g_originalPipboyMenu_Render = reinterpret_cast<PipboyMenu_RenderFunc*>(result);
+			LogHookResult("PipboyMenu_Render", result);
 		}
 	}
 }

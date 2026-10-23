@@ -154,7 +154,7 @@ namespace F4R_Upscaling
 					if (depthResource.description.format == FFX_SURFACE_FORMAT_R32_UINT) {
 						depthResource.description.format = FFX_SURFACE_FORMAT_R32_FLOAT;
 					}
-					depthRes->Release();
+					SafeRelease(depthRes);
 				}
 			}
 			if (!depthResource.resource) {
@@ -176,7 +176,7 @@ namespace F4R_Upscaling
 				mvSRV->GetResource(&mvRes);
 				if (mvRes) {
 					FfxResourceFromDX11Texture(mvResource, mvRes);
-					mvRes->Release();
+					SafeRelease(mvRes);
 				}
 			}
 			if (!mvResource.resource) {
@@ -211,7 +211,7 @@ namespace F4R_Upscaling
 		dispatch.motionVectorScale.x = static_cast<float>(renderWidth);
 		dispatch.motionVectorScale.y = static_cast<float>(renderHeight);
 		dispatch.enableSharpening = true;
-		dispatch.sharpness = aa.settings.fSharpness;
+		dispatch.sharpness = aa.settings.sharpness;
 		dispatch.frameTimeDelta = frameTimeDelta;
 		dispatch.preExposure = 1.0f;
 		dispatch.reset = aa.resetHistory;

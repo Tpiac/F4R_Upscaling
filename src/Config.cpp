@@ -95,28 +95,30 @@ namespace F4R_Upscaling
 		};
 
 		if constexpr (kBackendCount > 1) {
-			setEntry("iMethod", FormatInt(settings.iMethod),
+			setEntry("iMethod", FormatInt(static_cast<std::int32_t>(settings.method)),
 				"; FSR3 - Nvidia & AMD GPU, DLSS - RTX Only, XeSS - Intel & any GPU\n"
 				"; 1 - FSR3, 2 - DLSS, 3 - XeSS, 0 - Off");
 		}
-		setEntry("iQualityMode", FormatInt(settings.iQualityMode),
+		setEntry("iQualityMode", FormatInt(static_cast<std::int32_t>(settings.qualityMode)),
 			"; 0 = Native, 1 = Quality, 2 = Balanced, 3 = Performance\n"
 			"; ENB forces Native");
-		setEntry("fSharpness", FormatFloat(settings.fSharpness),
+		setEntry("fSharpness", FormatFloat(settings.sharpness),
 			"; RCAS sharpness - 0.0 = no sharpening, 1.0 = max");
 		if constexpr (kHasDLSS) {
-			setEntry("bEnableReflex", FormatBool(settings.bEnableReflex),
+		    setEntry("iDLSSPreset", FormatInt(static_cast<std::int32_t>(settings.dlssPreset)),
+				"; 0 = J, 1 = K (default), 2 = L, 3 = M");
+			setEntry("bEnableReflex", FormatBool(settings.enableReflex),
 				"; NVIDIA Reflex to reduce game latency");
-			setEntry("bReflexBoost", FormatBool(settings.bReflexBoost), {});
-			setEntry("bReflexUseFPSLimit", FormatBool(settings.bReflexUseFPSLimit), {});
-			setEntry("fReflexFPSLimit", FormatFloat(settings.fReflexFPSLimit), {});
+			setEntry("bReflexBoost", FormatBool(settings.reflexBoost), {});
+			setEntry("bReflexUseFPSLimit", FormatBool(settings.reflexUseFPSLimit), {});
+			setEntry("fReflexFPSLimit", FormatFloat(settings.reflexFPSLimit), {});
 		}
-		setEntry("fQualityScale", FormatFloat(settings.fQualityScale),
+		setEntry("fQualityScale", FormatFloat(settings.qualityScale),
 			"; Quality mode resolution scales\n"
 			"; Ranging from 0.60 to 0.67");
-		setEntry("fBalancedScale", FormatFloat(settings.fBalancedScale), "; Ranging from 0.55 to 0.62");
-		setEntry("fPerformanceScale", FormatFloat(settings.fPerformanceScale), "; Ranging from 0.50 to 0.55");
-		setEntry("fAnisotropicMipBias", FormatFloat(settings.fAnisotropicMipBias),
+		setEntry("fBalancedScale", FormatFloat(settings.balancedScale), "; Ranging from 0.55 to 0.62");
+		setEntry("fPerformanceScale", FormatFloat(settings.performanceScale), "; Ranging from 0.50 to 0.55");
+		setEntry("fAnisotropicMipBias", FormatFloat(settings.anisotropicMipBias),
 			"; -0.0001 = default safety net to preserve samplers from being overridden\n"
 			"; Ranging from -2.0 to 0.0");
 

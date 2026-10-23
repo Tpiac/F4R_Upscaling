@@ -27,6 +27,15 @@ namespace RE::BSGraphics
 
 namespace F4R_Upscaling
 {
+	template <class T>
+	inline void SafeRelease(T*& a_ptr) noexcept
+	{
+		if (a_ptr) {
+			a_ptr->Release();
+			a_ptr = nullptr;
+		}
+	}
+
 	inline bool IsAE()
 	{
 		return F4SE::IsRuntimeOnlyAE();
@@ -163,7 +172,9 @@ namespace F4R_Upscaling
 			kMainTemp = 4,
 			kGbufferNormal = 20,
 			kSSAOFinal = 25,
-			kMotionVectors = 29
+			kMotionVectors = 29,
+			kPipboyTarget = 60,
+			kPipboyTargetSwap = 61
 		};
 	}
 
@@ -186,26 +197,44 @@ namespace F4R_Upscaling
 	inline constexpr bool kHasDLSS = F4R_HAS_DLSS != 0;
 	inline constexpr bool kHasFSR3 = F4R_HAS_FSR3 != 0;
 	inline constexpr bool kHasXeSS = F4R_HAS_XESS != 0;
-	inline constexpr int kBackendCount = (kHasDLSS ? 1 : 0) + (kHasFSR3 ? 1 : 0) + (kHasXeSS ? 1 : 0);
+	inline constexpr std::int32_t kBackendCount = (kHasDLSS ? 1 : 0) + (kHasFSR3 ? 1 : 0) + (kHasXeSS ? 1 : 0);
 	inline constexpr Method kSoleBackend = kBackendCount == 1 ? (kHasDLSS ? Method::DLSS : (kHasFSR3 ? Method::FSR3 : Method::XeSS)) : Method::Off;
-	inline constexpr int kDefaultMethod = F4R_DEFAULT_Method;
+	inline constexpr Method kDefaultMethod = static_cast<Method>(F4R_DEFAULT_Method);
+
+	enum class DLSSPresetChoice : std::int32_t
+	{
+		J = 0,
+		K = 1,
+		L = 2,
+		M = 3
+	};
+
+enum class QualityMode : std::int32_t
+	{
+		Native = 0,
+		Quality = 1,
+		Balanced = 2,
+		Performance = 3
+	};
 
 	struct Settings
 	{
-		std::int32_t iMethod = kDefaultMethod;
+		Method method = kDefaultMethod;
 
-		float fSharpness = 0.5f;
-		float fAnisotropicMipBias = -0.0001f;
-		std::int32_t iQualityMode = 0;
+		float sharpness = 0.5f;
+		float anisotropicMipBias = -0.0001f;
+		QualityMode qualityMode = QualityMode::Native;
 
-		float fQualityScale = 0.648f;
-		float fBalancedScale = 0.59f;
-		float fPerformanceScale = 0.5f;
+		float qualityScale = 0.648f;
+		float balancedScale = 0.59f;
+		float performanceScale = 0.5f;
 
-		bool bEnableReflex = false;
-		bool bReflexBoost = false;
-		bool bReflexUseFPSLimit = false;
-		float fReflexFPSLimit = 60.0f;
+		bool enableReflex = false;
+		bool reflexBoost = false;
+		bool reflexUseFPSLimit = false;
+		float reflexFPSLimit = 60.0f;
+
+		DLSSPresetChoice dlssPreset = DLSSPresetChoice::K;
 	};
 
 	struct Texture2D
@@ -217,18 +246,10 @@ namespace F4R_Upscaling
 
 		~Texture2D()
 		{
-			if (uav) {
-				uav->Release();
-			}
-			if (srv) {
-				srv->Release();
-			}
-			if (rtv) {
-				rtv->Release();
-			}
-			if (resource) {
-				resource->Release();
-			}
+			SafeRelease(uav);
+			SafeRelease(srv);
+			SafeRelease(rtv);
+			SafeRelease(resource);
 		}
 	};
 
@@ -246,18 +267,10 @@ namespace F4R_Upscaling
 
 		~SharedTexture2D()
 		{
-			if (uav) {
-				uav->Release();
-			}
-			if (srv) {
-				srv->Release();
-			}
-			if (resource) {
-				resource->Release();
-			}
-			if (resource12) {
-				resource12->Release();
-			}
+			SafeRelease(uav);
+			SafeRelease(srv);
+			SafeRelease(resource);
+			SafeRelease(resource12);
 		}
 	};
 }
@@ -305,5 +318,71 @@ namespace F4R_Upscaling
 			return nullptr;
 		}
 		return (g_enbLoaded && g_realContext) ? g_realContext : reinterpret_cast<ID3D11DeviceContext*>(rd->context);
+	}
+
+	struct FullResRenderScope
+	{
+		explicit FullResRenderScope(bool a_active) noexcept :
+			manager(a_active ? &RE::BSGraphics::RenderTargetManager::GetSingleton() : nullptr),
+			state(a_active ? &RE::BSGraphics::State::GetSingleton() : nullptr)
+		{
+			if (manager) {
+				savedWidthRatio = GetDynWidthRatio(*manager);
+				savedHeightRatio = GetDynHeightRatio(*manager);
+				savedActivated = GetDynResActivated(*manager);
+				savedUseDynViewportAsDefault = GetUseDynViewportAsDefault(*manager);
+				SetGlobalDynamicRatio(*manager, 1.0f, 1.0f);
+				GetSetUseDynViewportAsDefault()(manager, false);
+				GetSetCurrentViewportDefault()(manager);
+			}
+			if (state) {
+				savedOffsetX = state->offsetX;
+				savedOffsetY = state->offsetY;
+				state->offsetX = 0.0f;
+				state->offsetY = 0.0f;
+			}
+		}
+
+		~FullResRenderScope() noexcept
+		{
+			if (manager) {
+				SetGlobalDynamicRatio(*manager, savedWidthRatio, savedHeightRatio);
+				GetDynResActivated(*manager) = savedActivated;
+				GetSetUseDynViewportAsDefault()(manager, savedUseDynViewportAsDefault);
+				GetSetCurrentViewportDefault()(manager);
+			}
+			if (state) {
+				state->offsetX = savedOffsetX;
+				state->offsetY = savedOffsetY;
+			}
+		}
+
+		FullResRenderScope(const FullResRenderScope&) = delete;
+		FullResRenderScope(FullResRenderScope&&) = delete;
+		FullResRenderScope& operator=(const FullResRenderScope&) = delete;
+		FullResRenderScope& operator=(FullResRenderScope&&) = delete;
+
+	private:
+		RE::BSGraphics::RenderTargetManager* manager = nullptr;
+		RE::BSGraphics::State* state = nullptr;
+		float savedWidthRatio = 1.0f;
+		float savedHeightRatio = 1.0f;
+		bool savedActivated = false;
+		bool savedUseDynViewportAsDefault = true;
+		float savedOffsetX = 0.0f;
+		float savedOffsetY = 0.0f;
+	};
+
+	inline bool IsPipboyRenderTarget(const RE::Interface3D::Renderer& a_renderer) noexcept
+	{
+		if (a_renderer.customRenderTarget != -1) {
+			const auto target = static_cast<std::uint32_t>(a_renderer.customRenderTarget);
+			return target == RenderTarget::kPipboyTarget || target == RenderTarget::kPipboyTargetSwap;
+		}
+		if (a_renderer.postfx == RE::Interface3D::PostEffect::kHUDGlass ||
+			a_renderer.postfx == RE::Interface3D::PostEffect::kHUDGlassWithMod) {
+			return false;
+		}
+		return a_renderer.omsize == RE::Interface3D::OffscreenMenuSize::kPipboy;
 	}
 }

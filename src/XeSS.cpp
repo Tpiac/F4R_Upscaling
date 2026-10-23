@@ -140,14 +140,14 @@ namespace F4R_Upscaling
 
 		IDXGIAdapter* adapter = nullptr;
 		HRESULT hr = dxgiDevice->GetAdapter(&adapter);
-		dxgiDevice->Release();
+		SafeRelease(dxgiDevice);
 		if (FAILED(hr) || !adapter) {
 			REX::LogWarning("Failed to get adapter");
 			return false;
 		}
 
 		hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&device));
-		adapter->Release();
+		SafeRelease(adapter);
 		if (FAILED(hr)) {
 			REX::LogWarning("D3D12CreateDevice failed hr=0x{:x}", static_cast<std::uint32_t>(hr));
 			return false;
@@ -203,7 +203,7 @@ namespace F4R_Upscaling
 		return true;
 	}
 
-	bool XeSS::CreateContext(std::uint32_t a_width, std::uint32_t a_height, int a_qualityMode)
+	bool XeSS::CreateContext(std::uint32_t a_width, std::uint32_t a_height, QualityMode a_qualityMode)
 	{
 		if (!device) {
 			return false;
@@ -221,13 +221,13 @@ namespace F4R_Upscaling
 		}
 
 		xess_quality_settings_t quality = XESS_QUALITY_SETTING_AA;
-		if (a_qualityMode == 1) {
+		if (a_qualityMode == QualityMode::Quality) {
 			quality = XESS_QUALITY_SETTING_QUALITY;
 		}
-		else if (a_qualityMode == 2) {
+		else if (a_qualityMode == QualityMode::Balanced) {
 			quality = XESS_QUALITY_SETTING_BALANCED;
 		}
-		else if (a_qualityMode == 3) {
+		else if (a_qualityMode == QualityMode::Performance) {
 			quality = XESS_QUALITY_SETTING_PERFORMANCE;
 		}
 
@@ -454,40 +454,16 @@ namespace F4R_Upscaling
 	void XeSS::TeardownD3D12()
 	{
 		fenceEvent.Close();
-		if (d3d11Fence) {
-			d3d11Fence->Release();
-			d3d11Fence = nullptr;
-		}
-		if (fence) {
-			fence->Release();
-			fence = nullptr;
-		}
+		SafeRelease(d3d11Fence);
+		SafeRelease(fence);
 		for (std::uint32_t i = 0; i < 2; i++) {
-			if (commandLists[i]) {
-				commandLists[i]->Release();
-				commandLists[i] = nullptr;
-			}
-			if (commandAllocators[i]) {
-				commandAllocators[i]->Release();
-				commandAllocators[i] = nullptr;
-			}
+			SafeRelease(commandLists[i]);
+			SafeRelease(commandAllocators[i]);
 		}
-		if (commandQueue) {
-			commandQueue->Release();
-			commandQueue = nullptr;
-		}
-		if (device) {
-			device->Release();
-			device = nullptr;
-		}
-		if (context4) {
-			context4->Release();
-			context4 = nullptr;
-		}
-		if (device5) {
-			device5->Release();
-			device5 = nullptr;
-		}
+		SafeRelease(commandQueue);
+		SafeRelease(device);
+		SafeRelease(context4);
+		SafeRelease(device5);
 		device11 = nullptr;
 		fenceValue = 0;
 		frameIndex = 0;
