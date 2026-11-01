@@ -640,12 +640,6 @@ method = settings.method;
 		if (main && (!main->gameActive || shouldBlock)) {
 			upsclEnabled = false;
 		}
-		if (auto* ui = RE::UI::GetSingleton()) {
-			static const RE::BSFixedString pipboyMenu("PipboyMenu");
-			if (ui->IsMenuOpen(pipboyMenu).value_or(false)) {
-				resetHistory = true;
-			}
-		}
 		if (!prevEnabled && upsclEnabled) {
 			resetHistory = true;
 		}
