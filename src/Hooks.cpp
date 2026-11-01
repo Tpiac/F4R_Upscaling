@@ -55,6 +55,27 @@ namespace
 		}
 	}
 
+	using Interface3D_CreateFunc = RE::Interface3D::Renderer*(
+		const RE::BSFixedString&, RE::UI_DEPTH_PRIORITY, float, bool);
+	Interface3D_CreateFunc* g_originalInterface3D_Create = nullptr;
+
+	RE::Interface3D::Renderer* Hook_Interface3D_Create(
+		const RE::BSFixedString& a_name,
+		RE::UI_DEPTH_PRIORITY a_depth,
+		float a_fov,
+		bool a_alwaysRenderWhenEnabled)
+	{
+		auto* renderer = g_originalInterface3D_Create
+			? g_originalInterface3D_Create(a_name, a_depth, a_fov, a_alwaysRenderWhenEnabled)
+			: nullptr;
+		if (renderer && Upscaling::GetSingleton().settings.method != Method::Off &&
+			(a_name == "WorkbenchItem3D" || a_name == "Container3D" || a_name == "ExamineMenuItem3D")) {
+			renderer->postAA = true;
+			renderer->useFullPremultAlpha = true;
+		}
+		return renderer;
+	}
+
 	using TAA_OffWhileUpscFunc = bool(ImageSpaceEffectTemporalAA*);
 
 	TAA_OffWhileUpscFunc* g_originalTAA_OffWhileUpsc = nullptr;
@@ -716,6 +737,13 @@ namespace F4R_Upscaling
 			auto result = Detours::X64::DetourFunction(hookAddr, reinterpret_cast<std::uintptr_t>(&Hook_PipboyMenu_Render));
 			g_originalPipboyMenu_Render = reinterpret_cast<PipboyMenu_RenderFunc*>(result);
 			LogHookResult("PipboyMenu_Render", result);
+		}
+
+		{
+			std::uintptr_t hookAddr = REL::Relocation{ RE::ID::Interface3D::Create }.GetAddress();
+			auto result = Detours::X64::DetourFunction(hookAddr, reinterpret_cast<std::uintptr_t>(&Hook_Interface3D_Create));
+			g_originalInterface3D_Create = reinterpret_cast<Interface3D_CreateFunc*>(result);
+			LogHookResult("Interface3D_Renderer_Create", result);
 		}
 	}
 }

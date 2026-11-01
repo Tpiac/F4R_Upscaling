@@ -579,15 +579,8 @@ const float mipBias = std::clamp(config.GetFloat("Settings", "fAnisotropicMipBia
 			return false;
 		}
 
-		static const std::array<RE::BSFixedString, 3> blockedMenus = {
-			"ExamineMenu", "LockpickingMenu"
-		};
-		for (const auto& name : blockedMenus) {
-			if (ui->IsMenuOpen(name).value_or(false)) {
-				return true;
-			}
-		}
-		return false;
+		static const RE::BSFixedString lockpickingMenu("LockpickingMenu");
+		return ui->IsMenuOpen(lockpickingMenu).value_or(false);
 	}
 
 	void Upscaling::Update()
@@ -646,6 +639,12 @@ method = settings.method;
 
 		if (main && (!main->gameActive || shouldBlock)) {
 			upsclEnabled = false;
+		}
+		if (auto* ui = RE::UI::GetSingleton()) {
+			static const RE::BSFixedString pipboyMenu("PipboyMenu");
+			if (ui->IsMenuOpen(pipboyMenu).value_or(false)) {
+				resetHistory = true;
+			}
 		}
 		if (!prevEnabled && upsclEnabled) {
 			resetHistory = true;
