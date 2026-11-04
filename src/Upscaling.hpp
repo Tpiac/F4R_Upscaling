@@ -302,6 +302,8 @@ namespace F4R_Upscaling
 		bool fxaaOriginalActive = false;
 		bool taaFlagSaved = false;
 		bool taaFlagOriginal = false;
+		bool sssStateSaved = false;
+		bool sssOriginalEnabled = false;
 		bool resourcesCreated = false;
 		std::uint32_t cachedWidth = 0;
 		std::uint32_t cachedHeight = 0;

@@ -1016,6 +1016,24 @@ method = settings.method;
 			}
 			*taaFlag = true;
 		}
+
+		if (IsOG()) {
+			auto* sssState = REL::Relocation<RE::BSShaderManager::State*>{ REL::Id<>{ 1327069 } }.get();
+			if (sssState) {
+				const bool shouldClear = upsclEnabled && settings.qualityMode != QualityMode::Native;
+				if (shouldClear) {
+					if (!sssStateSaved) {
+						sssOriginalEnabled = sssState->screenSpaceSubsurfaceScatteringEnabled;
+						sssStateSaved = true;
+					}
+					sssState->screenSpaceSubsurfaceScatteringEnabled = false;
+				}
+				else if (sssStateSaved && settings.qualityMode == QualityMode::Native) {
+					sssState->screenSpaceSubsurfaceScatteringEnabled = sssOriginalEnabled;
+					sssStateSaved = false;
+				}
+			}
+		}
 	}
 
 	void Upscaling::RestoreAASettings()
@@ -1030,6 +1048,14 @@ method = settings.method;
 			auto enableTAAReloc = IsAE() || IsNG() ? REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x294512 } } : REL::Relocation<std::uintptr_t>{ REL::Id<>{ 0x70681 } };
 			*reinterpret_cast<bool*>(enableTAAReloc.GetAddress()) = taaFlagOriginal;
 			taaFlagSaved = false;
+		}
+
+		if (IsOG() && sssStateSaved) {
+			auto* sssState = REL::Relocation<RE::BSShaderManager::State*>{ REL::Id<>{ 1327069 } }.get();
+			if (sssState) {
+				sssState->screenSpaceSubsurfaceScatteringEnabled = sssOriginalEnabled;
+			}
+			sssStateSaved = false;
 		}
 	}
 
