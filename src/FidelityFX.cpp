@@ -50,7 +50,8 @@ namespace F4R_Upscaling
 		ID3D11Device* device,
 		std::uint32_t backBufferWidth,
 		std::uint32_t backBufferHeight,
-		DXGI_FORMAT backBufferFormat)
+		DXGI_FORMAT backBufferFormat,
+		bool hdrInput)
 	{
 		if (!fsrScratchBuffer.empty()) {
 			REX::LogWarning("CreateFSRResources: already created, skipping");
@@ -79,6 +80,10 @@ namespace F4R_Upscaling
 
 		FfxFsr3ContextDescription contextDesc = {};
 		contextDesc.flags = FFX_FSR3_ENABLE_UPSCALING_ONLY;
+		if (hdrInput) {
+			contextDesc.flags |= FFX_FSR3_ENABLE_HIGH_DYNAMIC_RANGE;
+			REX::LogInformation("FSR3: HDR input");
+		}
 		contextDesc.maxRenderSize = { backBufferWidth, backBufferHeight };
 		contextDesc.maxUpscaleSize = { backBufferWidth, backBufferHeight };
 		contextDesc.displaySize = { backBufferWidth, backBufferHeight };

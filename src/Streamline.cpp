@@ -365,9 +365,7 @@ namespace F4R_Upscaling
 		if (a_colorSRV) {
 			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
 			a_colorSRV->GetDesc(&srvDesc);
-			isHDR = srvDesc.Format == DXGI_FORMAT_R11G11B10_FLOAT ||
-					srvDesc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT ||
-					srvDesc.Format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+			isHDR = IsHDRColorFormat(srvDesc.Format);
 		}
 
 		sl::DLSSOptions options{};

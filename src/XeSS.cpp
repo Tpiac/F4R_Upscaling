@@ -203,7 +203,7 @@ namespace F4R_Upscaling
 		return true;
 	}
 
-	bool XeSS::CreateContext(std::uint32_t a_width, std::uint32_t a_height, QualityMode a_qualityMode)
+	bool XeSS::CreateContext(std::uint32_t a_width, std::uint32_t a_height, QualityMode a_qualityMode, bool a_hdrInput)
 	{
 		if (!device) {
 			return false;
@@ -235,6 +235,10 @@ namespace F4R_Upscaling
 		params.outputResolution = { a_width, a_height };
 		params.qualitySetting = quality;
 		params.initFlags = XESS_INIT_FLAG_LDR_INPUT_COLOR;
+		if (a_hdrInput) {
+			params.initFlags = XESS_INIT_FLAG_NONE;
+			REX::LogInformation("XeSS: HDR input");
+		}
 		params.creationNodeMask = 0;
 		params.visibleNodeMask = 0;
 		params.pTempBufferHeap = nullptr;
