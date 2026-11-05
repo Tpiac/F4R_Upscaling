@@ -24,7 +24,8 @@ namespace F4R_Upscaling
 			ID3D11Device* device,
 			std::uint32_t backBufferWidth,
 			std::uint32_t backBufferHeight,
-			DXGI_FORMAT backBufferFormat);
+			DXGI_FORMAT backBufferFormat,
+			bool hdrInput);
 
 		void Apply(
 			ID3D11Texture2D* texture,

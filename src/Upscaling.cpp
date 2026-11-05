@@ -2414,7 +2414,7 @@ SafeRelease(savedPassDSV);
 			if (!fidelityFX->CreateFSRResources(
 					device,
 					state.screenWidth, state.screenHeight,
-					backBufferFormat)) {
+					backBufferFormat, IsHDRColorFormat(typedFormat))) {
 				REX::LogError("CheckResources: CreateFSRResources failed");
 				fidelityFX.reset();
 			}
@@ -2521,8 +2521,9 @@ SafeRelease(savedPassDSV);
 				REX::LogInformation("ENB forces Native for XeSS");
 			}
 
+			const bool xessHdrInput = IsHDRColorFormat(typedFormat);
 			if (!xess.initialized) {
-				if (!xess.CreateContext(width, height, xessQualityMode)) {
+				if (!xess.CreateContext(width, height, xessQualityMode, xessHdrInput)) {
 					fallbackNative("context creation failed");
 					return;
 				}
@@ -2530,7 +2531,7 @@ SafeRelease(savedPassDSV);
 			}
 			else if (cachedQuality != xessQualityMode) {
 				xess.DestroyContext();
-				if (!xess.CreateContext(width, height, xessQualityMode)) {
+				if (!xess.CreateContext(width, height, xessQualityMode, xessHdrInput)) {
 					fallbackNative("context creation failed");
 					return;
 				}
